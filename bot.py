@@ -1,23 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-"""
-Полный Telegram-бот «Business Syndrome Courses» с интеграцией CryptoCloud API V2,
-1Plat API (crypto и SBP), работой с Google Sheets и постоянным хранением оплаченных
-пользователей в paid_users.json, а также сохранением выставленных UUID-счетов в
-invoices.json (для CryptoCloud) и invoices_1plat.json (для 1Plat).
-
-— Перед запуском:
-  1) Убедитесь, что рядом с этим скриптом лежат:
-     • credentials.json         (ключ Google Service Account для доступа к Google Sheets)
-     • paid_users.json          (файл, в котором будут храниться оплаченные user_id; можно создать пустым [])
-     • invoices.json            (файл для хранения незавершённых UUID-счетов CryptoCloud; можно создать пустым {})
-     • invoices_1plat.json      (файл для хранения незавершённых GUID-счетов 1Plat; можно создать пустым {})
-  2) Установите зависимости:
-     pip install aiogram gspread oauth2client requests
-  3) Запустите:
-     python bot.py
-"""
 
 import asyncio
 import json
@@ -34,7 +17,25 @@ import memepay
 
 # — MemePay API:
 MEMEPAY_API_KEY = "mp_66d4562d38569b88879f5c8e62a908ce"
-MEMEPAY_SHOP_ID = "8c31090c-9bab-4d2a-abef-9cd2d02b6ecc"
+MEMEPAY_SHOP_ID  = "755b0055-39a4-4a91-bc6e-3ed590f0de52"
+MEMEPAY_CLIENT   = memepay.MemePay(api_key=MEMEPAY_API_KEY, shop_id=MEMEPAY_SHOP_ID)
+# — Telegram Bot token, CryptoCloud, 1Plat, Google Sheets:
+TELEGRAM_TOKEN      = "7198376627:AAG-vTOZu8XRMBA3nKflcouYx_lH03ETYjA"
+BANNER_URL          = "https://drive.google.com/uc?export=view&id=1nuxsSRsHW1FkCsA9EDbfNApKNzMYjjwK"
+CRYPTOCLOUD_API_KEY = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.…"
+# ID магазина для работы через API (integration ID)
+
+MEMEPAY_SHOP_ID = "755b0055-39a4-4a91-bc6e-3ed590f0de52"
+# Инициализируем клиент MemePay
+MEMEPAY_CLIENT = memepay.MemePay(api_key=MEMEPAY_API_KEY, shop_id=MEMEPAY_SHOP_ID)
+# Библиотека не инициализирует формат дат для синхронного клиента,
+# из-за чего возможен AttributeError при парсинге времени.
+
+MEMEPAY_SHOP_ID = "755b0055-39a4-4a91-bc6e-3ed590f0de52"
+
+# Инициализируем клиент MemePay
+MEMEPAY_CLIENT = memepay.MemePay(api_key=MEMEPAY_API_KEY, shop_id=MEMEPAY_SHOP_ID)
+
 
 from aiogram import Bot, Dispatcher, types
 from aiogram.client.default import DefaultBotProperties
@@ -62,31 +63,27 @@ CRYPTOCLOUD_API_KEY = (
     "Gm4T9igl5jYHV0eZrZTWSeDqRMomnlMDIrWluysHJOU"
 )
 CRYPTOCLOUD_SHOP_ID = "GBfdQ4QR7vPirbDh"
-CRYPTOCLOUD_API_BASE = "https://api.cryptocloud.plus/v2"
-
-# — 1Plat API:
-PLAT_SHOP_ID = "378"
-PLAT_SECRET = "6tN-S3G-4Rj-JN212"
-PLAT_API_BASE = "https://1plat.cash"
-
-# — Канал, на который пользователь должен быть подписан:
-CHANNEL_USERNAME = "@BusinessSyndrome"
-CHANNEL_URL = "https://t.me/BusinessSyndrome"
-
-# — Google Sheets — ID вашей таблицы и авторизация:
-SPREADSHEET_ID = "1RP-8VTd4RTf92mR426MXznRw8f_-hWbrgyon6ar33-8"
-SHEET_SCOPES = [
+CRYPTOCLOUD_API_BASE= "https://api.cryptocloud.plus/v2"
+PLAT_SHOP_ID        = "378"
+PLAT_SECRET         = "6tN-S3G-4Rj-JN212"
+PLAT_API_BASE       = "https://1plat.cash"
+CHANNEL_USERNAME    = "@BusinessSyndrome"
+CHANNEL_URL         = "https://t.me/BusinessSyndrome"
+SPREADSHEET_ID      = "1RP-8VTd4RTf92mR426MXznRw8f_-hWbrgyon6ar33-8"
+SHEET_SCOPES        = [
     "https://spreadsheets.google.com/feeds",
     "https://www.googleapis.com/auth/drive",
 ]
 
-# =========================================
-# 2. GOOGLE SHEETS: функции для чтения курсов
-# =========================================
-
+# — Google Sheets client
 CREDS = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", SHEET_SCOPES)
-GC = gspread.authorize(CREDS)
+GC    = gspread.authorize(CREDS)
 
+# — Кэш для вкладок (листов) с TTL = 1 час
+_SHEET_CACHE: Dict[str, List[Dict]]   = {}
+_SHEET_CACHE_LOCK                   = threading.Lock()
+_SHEET_CACHE_LOADED_AT: Dict[str,float] = {}
+_SHEET_CACHE_TTL                    = 3600  # 1 час
 # Кэш для вкладок (листов) с TTL = 1 час
 _SHEET_CACHE: Dict[str, List[Dict]] = {}
 _SHEET_CACHE_LOCK = threading.Lock()
@@ -333,33 +330,6 @@ def save_invoices_1plat():
 # =========================================
 # 6. CRYPTOCLOUD API V2: создание и проверка счета
 # =========================================
-# =========================================
-# 6bis. INVOICES: MemePay (invoices_memepay.json)
-# =========================================
-INVOICES_MEMEPAY_FILE = "invoices_memepay.json"
-INVOICES_MEMEPAY_LOCK = threading.Lock()
-INVOICES_MEMEPAY: Dict[str, str] = {}
-
-def load_invoices_memepay():
-    global INVOICES_MEMEPAY
-    if os.path.exists(INVOICES_MEMEPAY_FILE):
-        try:
-            with open(INVOICES_MEMEPAY_FILE, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                INVOICES_MEMEPAY = data if isinstance(data, dict) else {}
-        except:
-            INVOICES_MEMEPAY = {}
-    else:
-        INVOICES_MEMEPAY = {}
-
-def save_invoices_memepay():
-    try:
-        with INVOICES_MEMEPAY_LOCK:
-            with open(INVOICES_MEMEPAY_FILE, "w", encoding="utf-8") as f:
-                json.dump(INVOICES_MEMEPAY, f, ensure_ascii=False, indent=2)
-    except Exception as e:
-        print(f"[invoices_memepay] Ошибка при записи {INVOICES_MEMEPAY_FILE}: {e}")
-
 def create_cryptocloud_invoice(
     user_id: int,
     category: str,
@@ -447,6 +417,20 @@ def check_invoice_status_cc(invoice_uuid: str) -> str:
         raise RuntimeError("CryptoCloud: в ответе нет поля status для инвойса")
     return status  # "created", "pending", "paid", "overpaid", "canceled", ...
 
+# =========================================
+# 7. MemePay API: создание и проверка счёта
+# =========================================
+
+def create_memepay_invoice(amount_rub: float = 490.0, method: Optional[str] = None) -> Tuple[str, str]:
+    """Создаёт платёж через MemePay и возвращает (payment_id, pay_url)."""
+    resp = MEMEPAY_CLIENT.create_payment(amount=amount_rub, method=method)
+    return resp.payment_id, resp.payment_url
+
+def check_memepay_status(payment_id: str) -> str:
+    """Возвращает статус платежа MemePay."""
+    info = MEMEPAY_CLIENT.get_payment_info(payment_id)
+    return info.status
+
 
 # =========================================
 # 7. 1Plat API: создание и проверка счета (crypto и SBP)
@@ -515,9 +499,33 @@ def check_1plat_invoice_status(guid: str) -> int:
     Проверяет статус счета через GET /api/merchant/order/info/:guid/by-api.
     Возвращает целое значение status:
       -2, -1, 0, 1, 2
-      (см. документацию 1Plat: 0 = ожидает оплаты, 1 = успешно оплачен, ожидает подтверждения
+      (см. документацию 1Plat: 0 = ожидает оплаты, 1 = успешно оплачен,
+       ожидает мерчантом, 2 = подтверждён мерчантом и полностью закрыт).
+      (см. документацию 1Plat: 0 = ожидает оплаты, 1 = успешно оплачен,
+       ожидает мерчантом, 2 = подтверждён мерчантом и полностью закрыт).
+
+      (см. документацию 1Plat: 0 = ожидает оплаты, 1 = успешно оплачен,
+       ожидает мерчантом, 2 = подтверждён мерчантом и полностью закрыт).
+      (см. документацию 1Plat: 0 = ожидает оплаты, 1 = успешно оплачен,
+       ожидает мерчантом, 2 = подтверждён мерчантом и полностью закрыт).
+
+      (см. документацию 1Plat: 0 = ожидает оплаты, 1 = успешно оплачен,
+       ожидает мерчантом, 2 = подтверждён мерчантом и полностью закрыт).
+
+      (см. документацию 1Plat: 0 = ожидает оплаты, 1 = успешно оплачен, ожидает
        мерчантом, 2 = подтверждён мерчантом и полностью закрыт).
+
+    # --- ТЕСТОВАЯ ЗАГЛУШКА: для GUID="TEST-GUID-1234" сразу считаем платёж успешным
+    if guid == "TEST-GUID-1234":
+        return 2
+
+
+
     """
+
+    # --- ТЕСТОВАЯ ЗАГЛУШКА: для GUID="TEST-GUID-1234" сразу считаем платёж успешным
+    if guid == "TEST-GUID-1234":
+        return 2
     url = f"{PLAT_API_BASE}/api/merchant/order/info/{guid}/by-api"
     headers = {
         "x-shop": PLAT_SHOP_ID,
@@ -556,10 +564,64 @@ logger = logging.getLogger(__name__)
 
 bot = Bot(token=TELEGRAM_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher()
+# — Асинхронная проверка 1Plat (должна быть до @dp.startup)
+
+async def poll_1plat_invoices():
+    while True:
+        items = list(INVOICES_1PLAT.items())
+        for key, guid in items:
+            try:
+                status = check_1plat_invoice_status(guid)
+            except Exception as e:
+                logger.warning(f"[poll_1plat] Ошибка при проверке {guid}: {e}")
+                continue
+
+            user_id_str, category, offset_str, idx_str = key.split("|", 3)
+            user_id = int(user_id_str)
+            offset = int(offset_str)
+            idx = int(idx_str)
+
+            if status in (1, 2):
+                with INVOICES_1PLAT_LOCK:
+                    INVOICES_1PLAT.pop(key, None)
+                save_invoices_1plat()
+                add_subscription(user_id)
+
+                cr = get_courses_by_category(category, offset, 10)[idx]
+                title = cr["Название"]
+                cover = cr.get("Обложка") or BANNER_URL
+                tele_desc = cr.get("Описание", "").strip()
+                course_link = cr.get("Ссылка на курс", "").strip()
+
+                caption = f"🎉 <b>{title}</b>\n\nТеперь у вас есть доступ к материалам:"
+                kb = InlineKeyboardBuilder()
+                if tele_desc:
+                    kb.button(text="📓 Читать описание", url=tele_desc)
+                if course_link:
+                    kb.button(text="💎 Перейти к изучению", url=course_link)
+                kb.adjust(1)
+
+                await bot.send_photo(
+                    chat_id=user_id,
+                    photo=cover,
+                    caption=caption,
+                    reply_markup=kb.as_markup(),
+                )
+
+            elif status in (-1, -2):
+                with INVOICES_1PLAT_LOCK:
+                    INVOICES_1PLAT.pop(key, None)
+                save_invoices_1plat()
+
+        await asyncio.sleep(60)
+
 
 # Эмодзи для отображения рядом с курсом
 CURRENCY_EMOJI = ["💴", "💷", "💶", "💲"]
 
+# =========================================
+# Фоновая проверка счетов 1Plat
+# =========================================
 # =========================================
 # 10. HANDLERS
 # =========================================
@@ -576,6 +638,10 @@ async def on_startup():
     load_invoices_1plat()
     await bot.delete_webhook(drop_pending_updates=True)
     logger.info("Bot started, polling is ready…")
+
+    # Запускаем фоновую задачу для авто-проверки 1Plat
+    asyncio.create_task(poll_1plat_invoices())
+
 
 
 @dp.message(CommandStart())
@@ -1178,12 +1244,7 @@ async def pay_1plat_crypto_callback(query: CallbackQuery):
     await query.answer()
 
 
-@dp.callback_query(lambda c: c.data.startswith("pay_1plat_sbp|"))
-async def pay_1plat_sbp_callback(query: CallbackQuery):
-    """
-    
-    # ----------------------------------------
-# 7bis. MEMEPAY callbacks
+# ----- MemePay callbacks -----
 @dp.callback_query(lambda c: c.data.startswith("pay_memepay|"))
 async def pay_memepay_callback(query: CallbackQuery):
     # Разбираем данные
@@ -1203,19 +1264,13 @@ async def pay_memepay_callback(query: CallbackQuery):
             media=InputMediaPhoto(media=BANNER_URL,
                                   caption="Сначала подпишись на канал, чтобы продолжить:",
                                   parse_mode="HTML"),
-            reply_markup=kb.as_markup()
+            reply_markup=kb.as_markup(),
         )
         return
 
     # Создаём платёж через MemePay
     try:
-        payment = memepay.createPayment({
-            "amount": 490,
-            "method": memepay.PaymentMethod.SBP  # или другой метод из SDK
-        })
-        pay_link = payment.paymentUrl
-        payment_id = payment.id
-        # Сохраняем ID в invoices_memepay.json
+        payment_id, pay_link = create_memepay_invoice(amount_rub=490.0)
         key_mp = make_invoice_key(user_id, category, offset, idx)
         with INVOICES_MEMEPAY_LOCK:
             INVOICES_MEMEPAY[key_mp] = payment_id
@@ -1256,13 +1311,13 @@ async def check_payment_memepay_callback(query: CallbackQuery):
         return
 
     try:
-        info = memepay.getPaymentInfo(payment_id)
+        status = check_memepay_status(payment_id)
     except Exception as e:
         await query.answer("❌ Не удалось проверить оплату MemePay. Попробуйте позже.", show_alert=True)
         print(f"[check_payment_memepay] Ошибка при getPaymentInfo: {e}")
         return
 
-    if info.status == "completed":
+    if status in ("payed", "completed"):
         # Убираем из INVOICES и даём доступ
         with INVOICES_MEMEPAY_LOCK:
             INVOICES_MEMEPAY.pop(key_mp, None)
@@ -1276,111 +1331,17 @@ async def check_payment_memepay_callback(query: CallbackQuery):
         link = cr.get("Ссылка на курс", "")
         caption = f"🎉 <b>{title}</b>\n\nТеперь у вас есть доступ к материалам:"
         kb = InlineKeyboardBuilder()
-        if link: kb.button(text="💎 Перейти к изучению", url=link)
+        if link:
+            kb.button(text="💎 Перейти к изучению", url=link)
         kb.adjust(1)
         await bot.send_photo(chat_id=user_id, photo=cover, caption=caption, reply_markup=kb.as_markup())
     else:
-        await query.answer(f"⌛ Статус платежа: {info.status}. Подождите и попробуйте снова.", show_alert=True)
-# ----------------------------------------
-@dp.callback_query(lambda c: c.data.startswith("pay_memepay|"))
-async def pay_memepay_callback(query: CallbackQuery):
-    # Разбираем данные
-    _, category, offset_str, idx_str = query.data.split("|", 3)
-    offset = int(offset_str)
-    idx = int(idx_str)
-    user_id = query.from_user.id
+        await query.answer(f"⌛ Статус платежа: {status}. Подождите и попробуйте снова.", show_alert=True)
 
-    # Проверяем подписку
-    member = await bot.get_chat_member(chat_id=CHANNEL_USERNAME, user_id=user_id)
-    if member.status not in ("creator", "administrator", "member"):
-        kb = InlineKeyboardBuilder()
-        kb.button(text="Подписаться🌴", url=CHANNEL_URL)
-        kb.button(text="Проверить подписку", callback_data="check_subscription")
-        kb.adjust(1)
-        await query.message.edit_media(
-            media=InputMediaPhoto(media=BANNER_URL,
-                                  caption="Сначала подпишись на канал, чтобы продолжить:",
-                                  parse_mode="HTML"),
-            reply_markup=kb.as_markup()
-        )
-        return
 
-    # Создаём платеж через MemePay
-    try:
-        payment = memepay.createPayment({
-            "amount": 490,
-            "method": memepay.PaymentMethod.SBP   # или нужный метод из SDK
-        })
-        pay_link = payment.paymentUrl
-        payment_id = payment.id
-            key_mp = make_invoice_key(user_id, category, offset, idx)
-    with INVOICES_MEMEPAY_LOCK:
-        INVOICES_MEMEPAY[key_mp] = payment_id
-    save_invoices_memepay()
-    except Exception as e:
-        await query.answer("❌ Не удалось создать счёт через MemePay. Попробуйте позже.", show_alert=True)
-        print(f"[pay_memepay] Ошибка при создании платежа: {e}")
-        return
-
-    # Сохраняем ID
-
-    # Отправляем карточку с кнопками
-    caption = (
-        "<b>⚡ Чтобы получить доступ к курсу, оплатите через MemePay:</b>\n\n"
-        "Сумма: <code>490 ₽</code>\n\n"
-        "Нажмите «Оплатить в MemePay🤣», чтобы перейти к оплате.\n"
-        "После оплаты жмите «🔄 Проверить оплату»."
-    )
-    kb = InlineKeyboardBuilder()
-    kb.button(text="Оплатить в MemePay🤣", url=pay_link)
-    kb.button(text="🔄 Проверить оплату", callback_data=f"check_payment_memepay|{category}|{offset}|{idx}")
-    kb.button(text="🔙 Вернуться", callback_data=f"pay_options|{category}|{offset}|{idx}")
-    kb.adjust(1)
-
-    await bot.send_photo(chat_id=user_id, photo=BANNER_URL, caption=caption, reply_markup=kb.as_markup())
-
-@dp.callback_query(lambda c: c.data.startswith("check_payment_memepay|"))
-async def check_payment_memepay_callback(query: CallbackQuery):
-    # Разбираем данные
-    _, category, offset_str, idx_str = query.data.split("|", 3)
-    offset = int(offset_str)
-    idx = int(idx_str)
-    user_id = query.from_user.id
-
-    # Берём ID платежа
-    key_mp = make_invoice_key(user_id, category, offset, idx)
-    payment_id = INVOICES_MEMEPAY.get(key_mp)
-    if not payment_id:
-        await query.answer("❌ Платёж не найден. Сначала нажмите «Оплатить в MemePay🤣».", show_alert=True)
-        return
-
-    # Проверяем статус
-    try:
-        info = memepay.getPaymentInfo(payment_id)
-    except Exception as e:
-        await query.answer("❌ Не удалось проверить платёж в MemePay. Попробуйте позже.", show_alert=True)
-        print(f"[check_payment_memepay] Ошибка при getPaymentInfo: {e}")
-        return
-
-    # Если оплачено
-    if info.status in ("payed", "completed"):
-        # Убираем запись
-        with INVOICES_MEMEPAY_LOCK:
-            INVOICES_MEMEPAY.pop(key_mp, None)
-        save_invoices_memepay()
-
-        # Даем доступ
-        add_subscription(user_id)
-        await query.answer("✅ Оплата через MemePay подтверждена! Доступ к курсу ниже.", show_alert=True)
-        cr = get_courses_by_category(category, offset, 10)[idx]
-        caption = f"🎉 <b>{cr['Название']}</b>\n\nТеперь у вас есть доступ к материалам:"
-        kb = InlineKeyboardBuilder()
-        if desc := cr.get("Ссылка на курс", "").strip():
-            kb.button(text="💎 Перейти к изучению", url=desc)
-        kb.adjust(1)
-        await bot.send_photo(chat_id=user_id, photo=cr.get("Обложка", BANNER_URL), caption=caption, reply_markup=kb.as_markup())
-    else:
-        await query.answer("⌛ Платёж ещё не завершён. Подождите и попробуйте снова.", show_alert=True)
+@dp.callback_query(lambda c: c.data.startswith("pay_1plat_sbp|"))
+async def pay_1plat_sbp_callback(query: CallbackQuery):
+    """
     Callback «pay_1plat_sbp|<category>|<offset>|<idx>»:
     1) Убедимся, что пользователь подписан на канал.
     2) Создаём счёт через 1Plat (SBP).
@@ -1541,6 +1502,9 @@ async def check_payment_1plat_callback(query: CallbackQuery):
     await query.answer(f"⚠ Статус 1Plat: «{status}». Возможно, платёж не завершён.", show_alert=True)
 
 
+# =========================================
+# Фоновая проверка счетов 1Plat
+# =========================================
 # =========================================
 # 11. ЗАПУСК POLLING
 # =========================================
