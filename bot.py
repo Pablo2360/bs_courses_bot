@@ -978,9 +978,9 @@ async def pay_options_callback(query: CallbackQuery):
 
     new_caption = "Выберите способ оплаты💎"
     kb = InlineKeyboardBuilder()
-    kb.button(text="CryptoCloud☁️", callback_data=f"pay_cc|{category}|{offset}|{idx}")
-    kb.button(text="1Plat SBP📱", callback_data=f"pay_1plat_sbp|{category}|{offset}|{idx}")
-    kb.button(text="MemePay🤣", callback_data=f"pay_memepay|{category}|{offset}|{idx}")
+    kb.button(text="MemePay🐸 — СБП, карты и др.", callback_data=f"pay_memepay|{category}|{offset}|{idx}")
+    kb.button(text="1Plat💶 — СБП", callback_data=f"pay_1plat_sbp|{category}|{offset}|{idx}")
+    kb.button(text="CryptoCloud☁️ — Крипта", callback_data=f"pay_cc|{category}|{offset}|{idx}")
     kb.button(text="🔙 Вернуться", callback_data=f"course|{category}|{offset}|{idx}")
     kb.adjust(1)
 
