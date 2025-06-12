@@ -412,7 +412,7 @@ def check_invoice_status_cc(invoice_uuid: str) -> str:
 # 7. MemePay API: создание и проверка счёта
 # =========================================
 
-def create_memepay_invoice(amount_rub: float = 490.0, method: Optional[str] = None) -> Tuple[str, str]:
+def create_memepay_invoice(amount_rub: float = 10.0, method: Optional[str] = None) -> Tuple[str, str]:
     """Создаёт платёж через MemePay и возвращает (payment_id, pay_url)."""
     resp = MEMEPAY_CLIENT.create_payment(amount=amount_rub, method=method)
     return resp.payment_id, resp.payment_url
@@ -1185,7 +1185,7 @@ async def pay_memepay_callback(query: CallbackQuery):
 
     # Создаём платёж через MemePay
     try:
-        payment_id, pay_link = create_memepay_invoice(amount_rub=490.0)
+        payment_id, pay_link = create_memepay_invoice(amount_rub=10.0)
         key_mp = make_invoice_key(user_id, category, offset, idx)
         with INVOICES_MEMEPAY_LOCK:
             INVOICES_MEMEPAY[key_mp] = payment_id
