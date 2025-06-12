@@ -17,24 +17,14 @@ import memepay
 
 # — MemePay API:
 MEMEPAY_API_KEY = "mp_66d4562d38569b88879f5c8e62a908ce"
-MEMEPAY_SHOP_ID  = "755b0055-39a4-4a91-bc6e-3ed590f0de52"
-MEMEPAY_CLIENT   = memepay.MemePay(api_key=MEMEPAY_API_KEY, shop_id=MEMEPAY_SHOP_ID)
+MEMEPAY_SHOP_ID = "755b0055-39a4-4a91-bc6e-3ed590f0de52"
+MEMEPAY_CLIENT = memepay.MemePay(api_key=MEMEPAY_API_KEY, shop_id=MEMEPAY_SHOP_ID)
+MEMEPAY_CLIENT.datetime_format = "iso"
 # — Telegram Bot token, CryptoCloud, 1Plat, Google Sheets:
 TELEGRAM_TOKEN      = "7198376627:AAG-vTOZu8XRMBA3nKflcouYx_lH03ETYjA"
 BANNER_URL          = "https://drive.google.com/uc?export=view&id=1nuxsSRsHW1FkCsA9EDbfNApKNzMYjjwK"
 CRYPTOCLOUD_API_KEY = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.…"
 # ID магазина для работы через API (integration ID)
-
-MEMEPAY_SHOP_ID = "755b0055-39a4-4a91-bc6e-3ed590f0de52"
-# Инициализируем клиент MemePay
-MEMEPAY_CLIENT = memepay.MemePay(api_key=MEMEPAY_API_KEY, shop_id=MEMEPAY_SHOP_ID)
-# Библиотека не инициализирует формат дат для синхронного клиента,
-# из-за чего возможен AttributeError при парсинге времени.
-
-MEMEPAY_SHOP_ID = "755b0055-39a4-4a91-bc6e-3ed590f0de52"
-
-# Инициализируем клиент MemePay
-MEMEPAY_CLIENT = memepay.MemePay(api_key=MEMEPAY_API_KEY, shop_id=MEMEPAY_SHOP_ID)
 
 
 from aiogram import Bot, Dispatcher, types
@@ -421,7 +411,7 @@ def check_invoice_status_cc(invoice_uuid: str) -> str:
 # 7. MemePay API: создание и проверка счёта
 # =========================================
 
-def create_memepay_invoice(amount_rub: float = 490.0, method: Optional[str] = None) -> Tuple[str, str]:
+def create_memepay_invoice(amount_rub: float = 10.0, method: Optional[str] = None) -> Tuple[str, str]:
     """Создаёт платёж через MemePay и возвращает (payment_id, pay_url)."""
     resp = MEMEPAY_CLIENT.create_payment(amount=amount_rub, method=method)
     return resp.payment_id, resp.payment_url
@@ -1070,10 +1060,8 @@ async def pay_cc_callback(query: CallbackQuery):
     kb.button(text="🔙 Вернуться", callback_data=f"pay_options|{category}|{offset}|{idx}")
     kb.adjust(1)
 
-    await bot.send_photo(
-        chat_id=user_id,
-        photo=BANNER_URL,
-        caption=caption,
+    await query.message.edit_media(
+        media=InputMediaPhoto(media=BANNER_URL, caption=caption, parse_mode=ParseMode.HTML),
         reply_markup=kb.as_markup()
     )
     await query.answer()
@@ -1138,6 +1126,7 @@ async def check_payment_cc_callback(query: CallbackQuery):
             kb.button(text="📓 Читать описание", url=tele_desc)
         if course_link:
             kb.button(text="💎 Перейти к изучению", url=course_link)
+        kb.button(text="🔙 Вернуться", callback_data=f"cat|{category}|{offset}")
         kb.adjust(1)
 
         try:
@@ -1235,10 +1224,8 @@ async def pay_1plat_crypto_callback(query: CallbackQuery):
     kb.button(text="🔙 Вернуться", callback_data=f"pay_options|{category}|{offset}|{idx}")
     kb.adjust(1)
 
-    await bot.send_photo(
-        chat_id=user_id,
-        photo=BANNER_URL,
-        caption=caption,
+    await query.message.edit_media(
+        media=InputMediaPhoto(media=BANNER_URL, caption=caption, parse_mode=ParseMode.HTML),
         reply_markup=kb.as_markup()
     )
     await query.answer()
@@ -1270,7 +1257,7 @@ async def pay_memepay_callback(query: CallbackQuery):
 
     # Создаём платёж через MemePay
     try:
-        payment_id, pay_link = create_memepay_invoice(amount_rub=490.0)
+        payment_id, pay_link = create_memepay_invoice(amount_rub=10.0)
         key_mp = make_invoice_key(user_id, category, offset, idx)
         with INVOICES_MEMEPAY_LOCK:
             INVOICES_MEMEPAY[key_mp] = payment_id
@@ -1283,7 +1270,7 @@ async def pay_memepay_callback(query: CallbackQuery):
     # Отправляем карточку с кнопками оплаты и проверки
     caption = (
         "<b>⚡ Чтобы получить доступ к курсу, оплатите через MemePay:</b>\n\n"
-        "Сумма: <code>490 ₽</code>\n\n"
+        "Сумма: <code>10 ₽</code>\n\n"
         "Нажмите «Оплатить в MemePay🤪», чтобы перейти к оплате.\n"
         "После оплаты нажмите «🔄 Проверить оплату»."
     )
@@ -1293,7 +1280,10 @@ async def pay_memepay_callback(query: CallbackQuery):
     kb.button(text="🔙 Вернуться", callback_data=f"pay_options|{category}|{offset}|{idx}")
     kb.adjust(1)
 
-    await bot.send_photo(chat_id=user_id, photo=BANNER_URL, caption=caption, reply_markup=kb.as_markup())
+    await query.message.edit_media(
+        media=InputMediaPhoto(media=BANNER_URL, caption=caption, parse_mode=ParseMode.HTML),
+        reply_markup=kb.as_markup(),
+    )
     await query.answer()
 
 
@@ -1333,6 +1323,7 @@ async def check_payment_memepay_callback(query: CallbackQuery):
         kb = InlineKeyboardBuilder()
         if link:
             kb.button(text="💎 Перейти к изучению", url=link)
+        kb.button(text="🔙 Вернуться", callback_data=f"cat|{category}|{offset}")
         kb.adjust(1)
         await bot.send_photo(chat_id=user_id, photo=cover, caption=caption, reply_markup=kb.as_markup())
     else:
@@ -1406,11 +1397,9 @@ async def pay_1plat_sbp_callback(query: CallbackQuery):
     kb.button(text="🔙 Вернуться", callback_data=f"pay_options|{category}|{offset}|{idx}")
     kb.adjust(1)
 
-    await bot.send_photo(
-        chat_id=user_id,
-        photo=BANNER_URL,
-        caption=caption,
-        reply_markup=kb.as_markup()
+    await query.message.edit_media(
+        media=InputMediaPhoto(media=BANNER_URL, caption=caption, parse_mode=ParseMode.HTML),
+        reply_markup=kb.as_markup(),
     )
     await query.answer()
 
@@ -1474,6 +1463,7 @@ async def check_payment_1plat_callback(query: CallbackQuery):
             kb.button(text="📓 Читать описание", url=tele_desc)
         if course_link:
             kb.button(text="💎 Перейти к изучению", url=course_link)
+        kb.button(text="🔙 Вернуться", callback_data=f"cat|{category}|{offset}")
         kb.adjust(1)
 
         try:
