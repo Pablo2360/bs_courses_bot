@@ -326,7 +326,7 @@ def create_cryptocloud_invoice(
     category: str,
     offset: int,
     idx: int,
-    rub_amount: float = 490.0,
+    rub_amount: float = 590.0,
     rub_currency: str = "RUB"
 ) -> Tuple[str, str]:
     """
@@ -412,7 +412,7 @@ def check_invoice_status_cc(invoice_uuid: str) -> str:
 # 7. MemePay API: создание и проверка счёта
 # =========================================
 
-def create_memepay_invoice(amount_rub: float = 10.0, method: Optional[str] = None) -> Tuple[str, str]:
+def create_memepay_invoice(amount_rub: float = 590.0, method: Optional[str] = None) -> Tuple[str, str]:
     """Создаёт платёж через MemePay и возвращает (payment_id, pay_url)."""
     resp = MEMEPAY_CLIENT.create_payment(amount=amount_rub, method=method)
     return resp.payment_id, resp.payment_url
@@ -432,7 +432,7 @@ def create_1plat_invoice(
     category: str,
     offset: int,
     idx: int,
-    amount_rub: int = 490,
+    amount_rub: int = 590,
     method: str = "crypto",
     currency: Optional[str] = "USDT",
     email: str = ""
@@ -978,9 +978,9 @@ async def pay_options_callback(query: CallbackQuery):
 
     new_caption = "Выберите способ оплаты💎"
     kb = InlineKeyboardBuilder()
-    kb.button(text="CryptoCloud☁️", callback_data=f"pay_cc|{category}|{offset}|{idx}")
-    kb.button(text="1Plat SBP📱", callback_data=f"pay_1plat_sbp|{category}|{offset}|{idx}")
-    kb.button(text="MemePay🤣", callback_data=f"pay_memepay|{category}|{offset}|{idx}")
+    kb.button(text="MemePay🐸 — СБП, карты и др.", callback_data=f"pay_memepay|{category}|{offset}|{idx}")
+    kb.button(text="1Plat💶 — СБП", callback_data=f"pay_1plat_sbp|{category}|{offset}|{idx}")
+    kb.button(text="CryptoCloud☁️ — Крипта", callback_data=f"pay_cc|{category}|{offset}|{idx}")
     kb.button(text="🔙 Вернуться", callback_data=f"course|{category}|{offset}|{idx}")
     kb.adjust(1)
 
@@ -1001,7 +1001,7 @@ async def pay_cc_callback(query: CallbackQuery):
     1) Убедимся, что пользователь подписан на канал.
     2) Создаём счёт через CryptoCloud.
     3) Сохраняем invoice_uuid в invoices.json.
-    4) Отправляем карточку «Оплатить крипто» + «🔄 Проверить оплату» + «🔙 Вернуться».
+    4) Отправляем карточку «Оплатить криптой🧊» + «🔄 Проверить оплату» + «🔙 Вернуться».
     """
     _, category, offset_str, idx_str = query.data.split("|", 3)
     offset = int(offset_str)
@@ -1032,7 +1032,7 @@ async def pay_cc_callback(query: CallbackQuery):
             category=category,
             offset=offset,
             idx=idx,
-            rub_amount=490.0,
+            rub_amount=590.0,
             rub_currency="RUB"
         )
     except Exception as e:
@@ -1046,16 +1046,16 @@ async def pay_cc_callback(query: CallbackQuery):
         INVOICES[key_cc] = invoice_uuid
     save_invoices_cc()
 
-    # 3) Отправляем карточку с кнопками «Оплатить крипто» и «🔄 Проверить оплату»
+    # 3) Отправляем карточку с кнопками «Оплатить криптой🧊» и «🔄 Проверить оплату»
     caption = (
         "<b>⚡ Чтобы получить доступ к курсу, оплатите счёт ниже.</b>\n\n"
-        "Сумма: <code>490 ₽</code>\n"
+        "Сумма: <code>590 ₽</code>\n"
         "CryptoCloud пересчитает её в USD/USDT по текущему курсу.\n\n"
-        "Нажмите кнопку «Оплатить крипто», чтобы перейти на страницу оплаты.\n\n"
+        "Нажмите кнопку «Оплатить криптой🧊», чтобы перейти на страницу оплаты.\n\n"
         "После оплаты нажмите «🔄 Проверить оплату»."
     )
     kb = InlineKeyboardBuilder()
-    kb.button(text="Оплатить крипто", url=pay_link)
+    kb.button(text="Оплатить криптой🧊", url=pay_link)
     kb.button(text="🔄 Проверить оплату", callback_data=f"check_payment_cc|{category}|{offset}|{idx}")
     kb.button(text="🔙 Вернуться", callback_data=f"pay_options|{category}|{offset}|{idx}")
     kb.adjust(1)
@@ -1088,7 +1088,7 @@ async def check_payment_cc_callback(query: CallbackQuery):
     key_cc = make_invoice_key(user_id, category, offset, idx)
     invoice_uuid = INVOICES.get(key_cc)
     if not invoice_uuid:
-        await query.answer("❌ Счет не найден. Сначала нажмите «Оплатить крипто».", show_alert=True)
+        await query.answer("❌ Счет не найден. Сначала нажмите «Оплатить криптой🧊».", show_alert=True)
         return
 
     try:
@@ -1164,7 +1164,7 @@ async def pay_1plat_crypto_callback(query: CallbackQuery):
     1) Убедимся, что пользователь подписан на канал.
     2) Создаём счёт через 1Plat (crypto).
     3) Сохраняем guid в invoices_1plat.json.
-    4) Отправляем карточку «Оплатить крипто (1Plat)» + «🔄 Проверить оплату 1Plat» + «🔙 Вернуться».
+    4) Отправляем карточку «Оплатить криптой🧊 (1Plat)» + «🔄 Проверить оплату 1Plat» + «🔙 Вернуться».
     """
     _, category, offset_str, idx_str = query.data.split("|", 3)
     offset = int(offset_str)
@@ -1195,7 +1195,7 @@ async def pay_1plat_crypto_callback(query: CallbackQuery):
             category=category,
             offset=offset,
             idx=idx,
-            amount_rub=490,
+            amount_rub=590,
             method="crypto",
             currency="USDT",
             email=""
@@ -1214,12 +1214,12 @@ async def pay_1plat_crypto_callback(query: CallbackQuery):
     # 3) Отправляем карточку с кнопками «Оплатить (1Plat)» и «🔄 Проверить оплату 1Plat»
     caption = (
         "<b>⚡ Чтобы получить доступ к курсу, оплатите счёт 1Plat ниже (crypto).</b>\n\n"
-        "Сумма: <code>490 ₽</code>\n"
+        "Сумма: <code>590 ₽</code>\n"
         "1Plat пересчитает её в USDT.\n\n"
-        "Нажмите кнопку «Оплатить крипто (1Plat)», чтобы перейти на страницу оплаты.\n\n"
+        "Нажмите кнопку «Оплатить криптой🧊 (1Plat)», чтобы перейти на страницу оплаты.\n\n"
         "После оплаты нажмите «🔄 Проверить оплату 1Plat».")
     kb = InlineKeyboardBuilder()
-    kb.button(text="Оплатить крипто (1Plat)", url=pay_link)
+    kb.button(text="Оплатить криптой🧊 (1Plat)", url=pay_link)
     kb.button(text="🔄 Проверить оплату 1Plat", callback_data=f"check_payment_1plat|{category}|{offset}|{idx}")
     kb.button(text="🔙 Вернуться", callback_data=f"pay_options|{category}|{offset}|{idx}")
     kb.adjust(1)
@@ -1257,7 +1257,7 @@ async def pay_memepay_callback(query: CallbackQuery):
 
     # Создаём платёж через MemePay
     try:
-        payment_id, pay_link = create_memepay_invoice(amount_rub=10.0)
+        payment_id, pay_link = create_memepay_invoice(amount_rub=590.0)
         key_mp = make_invoice_key(user_id, category, offset, idx)
         with INVOICES_MEMEPAY_LOCK:
             INVOICES_MEMEPAY[key_mp] = payment_id
@@ -1270,7 +1270,7 @@ async def pay_memepay_callback(query: CallbackQuery):
     # Отправляем карточку с кнопками оплаты и проверки
     caption = (
         "<b>⚡ Чтобы получить доступ к курсу, оплатите через MemePay:</b>\n\n"
-        "Сумма: <code>10 ₽</code>\n\n"
+        "Сумма: <code>590 ₽</code>\n\n"
         "Нажмите «Оплатить в MemePay🤪», чтобы перейти к оплате.\n"
         "После оплаты нажмите «🔄 Проверить оплату»."
     )
@@ -1368,7 +1368,7 @@ async def pay_1plat_sbp_callback(query: CallbackQuery):
             category=category,
             offset=offset,
             idx=idx,
-            amount_rub=490,
+            amount_rub=590,
             method="sbp",
             currency=None,
             email=""
@@ -1387,7 +1387,7 @@ async def pay_1plat_sbp_callback(query: CallbackQuery):
     # 3) Отправляем карточку с кнопками «Оплатить SBP (1Plat)» и «🔄 Проверить оплату 1Plat»
     caption = (
         "<b>⚡ Чтобы получить доступ к курсу, оплатите счёт 1Plat ниже (SBP).</b>\n\n"
-        "Сумма: <code>490 ₽</code>\n"
+        "Сумма: <code>590 ₽</code>\n"
         "Оплатите через СБП по номеру телефона.\n\n"
         "Нажмите кнопку «Оплатить SBP (1Plat)», чтобы перейти на страницу оплаты.\n\n"
         "После оплаты нажмите «🔄 Проверить оплату 1Plat».")
