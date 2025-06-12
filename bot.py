@@ -1272,6 +1272,7 @@ async def pay_memepay_callback(query: CallbackQuery):
         "<b>⚡ Чтобы получить доступ к курсу, оплатите через MemePay:</b>\n\n"
         "Сумма: <code>590 ₽</code>\n\n"
         "Нажмите «Оплатить в MemePay🐸», чтобы перейти к оплате.\n"
+        "Нажмите «Оплатить в MemePay🤪», чтобы перейти к оплате.\n"
         "После оплаты нажмите «🔄 Проверить оплату»."
     )
     kb = InlineKeyboardBuilder()
