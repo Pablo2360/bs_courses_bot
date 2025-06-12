@@ -1128,6 +1128,7 @@ async def check_payment_cc_callback(query: CallbackQuery):
             kb.button(text="📓 Читать описание", url=tele_desc)
         if course_link:
             kb.button(text="💎 Перейти к изучению", url=course_link)
+        kb.button(text="🔙 Вернуться", callback_data=f"cat|{category}|{offset}")
         kb.adjust(1)
 
         try:
@@ -1248,6 +1249,7 @@ async def check_payment_memepay_callback(query: CallbackQuery):
         kb = InlineKeyboardBuilder()
         if link:
             kb.button(text="💎 Перейти к изучению", url=link)
+        kb.button(text="🔙 Вернуться", callback_data=f"cat|{category}|{offset}")
         kb.adjust(1)
         await bot.send_photo(chat_id=user_id, photo=cover, caption=caption, reply_markup=kb.as_markup())
     else:
@@ -1389,6 +1391,7 @@ async def check_payment_1plat_callback(query: CallbackQuery):
             kb.button(text="📓 Читать описание", url=tele_desc)
         if course_link:
             kb.button(text="💎 Перейти к изучению", url=course_link)
+        kb.button(text="🔙 Вернуться", callback_data=f"cat|{category}|{offset}")
         kb.adjust(1)
 
         try:
