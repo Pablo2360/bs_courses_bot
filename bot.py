@@ -1060,10 +1060,8 @@ async def pay_cc_callback(query: CallbackQuery):
     kb.button(text="🔙 Вернуться", callback_data=f"pay_options|{category}|{offset}|{idx}")
     kb.adjust(1)
 
-    await bot.send_photo(
-        chat_id=user_id,
-        photo=BANNER_URL,
-        caption=caption,
+    await query.message.edit_media(
+        media=InputMediaPhoto(media=BANNER_URL, caption=caption, parse_mode=ParseMode.HTML),
         reply_markup=kb.as_markup()
     )
     await query.answer()
@@ -1159,6 +1157,79 @@ async def check_payment_cc_callback(query: CallbackQuery):
 
 # ----- 1Plat callbacks -----
 
+@dp.callback_query(lambda c: c.data.startswith("pay_1plat_crypto|"))
+async def pay_1plat_crypto_callback(query: CallbackQuery):
+    """
+    Callback «pay_1plat_crypto|<category>|<offset>|<idx>»:
+    1) Убедимся, что пользователь подписан на канал.
+    2) Создаём счёт через 1Plat (crypto).
+    3) Сохраняем guid в invoices_1plat.json.
+    4) Отправляем карточку «Оплатить крипто (1Plat)» + «🔄 Проверить оплату 1Plat» + «🔙 Вернуться».
+    """
+    _, category, offset_str, idx_str = query.data.split("|", 3)
+    offset = int(offset_str)
+    idx = int(idx_str)
+    user_id = query.from_user.id
+
+    member = await bot.get_chat_member(chat_id=CHANNEL_USERNAME, user_id=user_id)
+    if member.status not in ("creator", "administrator", "member"):
+        kb_sub = InlineKeyboardBuilder()
+        kb_sub.button(text="Подписаться🌴", url=CHANNEL_URL)
+        kb_sub.button(text="Проверить подписку", callback_data="check_subscription")
+        kb_sub.adjust(1)
+        await query.message.edit_media(
+            media=InputMediaPhoto(
+                media=BANNER_URL,
+                caption="Сначала подпишись на канал, чтоб не потерять нас:",
+                parse_mode="HTML"
+            ),
+            reply_markup=kb_sub.as_markup()
+        )
+        await query.answer()
+        return
+
+    # 1) Создаём новый счёт 1Plat (crypto)
+    try:
+        guid, pay_link = create_1plat_invoice(
+            user_id=user_id,
+            category=category,
+            offset=offset,
+            idx=idx,
+            amount_rub=490,
+            method="crypto",
+            currency="USDT",
+            email=""
+        )
+    except Exception as e:
+        await query.answer("❌ Не удалось создать счёт 1Plat (crypto). Попробуйте позже.", show_alert=True)
+        print(f"[pay_1plat_crypto] Ошибка при создании счета 1Plat (crypto): {e}")
+        return
+
+    # 2) Сохраняем guid
+    key_1p = make_invoice_key(user_id, category, offset, idx)
+    with INVOICES_1PLAT_LOCK:
+        INVOICES_1PLAT[key_1p] = guid
+    save_invoices_1plat()
+
+    # 3) Отправляем карточку с кнопками «Оплатить (1Plat)» и «🔄 Проверить оплату 1Plat»
+    caption = (
+        "<b>⚡ Чтобы получить доступ к курсу, оплатите счёт 1Plat ниже (crypto).</b>\n\n"
+        "Сумма: <code>490 ₽</code>\n"
+        "1Plat пересчитает её в USDT.\n\n"
+        "Нажмите кнопку «Оплатить крипто (1Plat)», чтобы перейти на страницу оплаты.\n\n"
+        "После оплаты нажмите «🔄 Проверить оплату 1Plat».")
+    kb = InlineKeyboardBuilder()
+    kb.button(text="Оплатить крипто (1Plat)", url=pay_link)
+    kb.button(text="🔄 Проверить оплату 1Plat", callback_data=f"check_payment_1plat|{category}|{offset}|{idx}")
+    kb.button(text="🔙 Вернуться", callback_data=f"pay_options|{category}|{offset}|{idx}")
+    kb.adjust(1)
+
+    await query.message.edit_media(
+        media=InputMediaPhoto(media=BANNER_URL, caption=caption, parse_mode=ParseMode.HTML),
+        reply_markup=kb.as_markup()
+    )
+    await query.answer()
+
 
 # ----- MemePay callbacks -----
 @dp.callback_query(lambda c: c.data.startswith("pay_memepay|"))
@@ -1209,7 +1280,10 @@ async def pay_memepay_callback(query: CallbackQuery):
     kb.button(text="🔙 Вернуться", callback_data=f"pay_options|{category}|{offset}|{idx}")
     kb.adjust(1)
 
-    await bot.send_photo(chat_id=user_id, photo=BANNER_URL, caption=caption, reply_markup=kb.as_markup())
+    await query.message.edit_media(
+        media=InputMediaPhoto(media=BANNER_URL, caption=caption, parse_mode=ParseMode.HTML),
+        reply_markup=kb.as_markup(),
+    )
     await query.answer()
 
 
@@ -1323,11 +1397,9 @@ async def pay_1plat_sbp_callback(query: CallbackQuery):
     kb.button(text="🔙 Вернуться", callback_data=f"pay_options|{category}|{offset}|{idx}")
     kb.adjust(1)
 
-    await bot.send_photo(
-        chat_id=user_id,
-        photo=BANNER_URL,
-        caption=caption,
-        reply_markup=kb.as_markup()
+    await query.message.edit_media(
+        media=InputMediaPhoto(media=BANNER_URL, caption=caption, parse_mode=ParseMode.HTML),
+        reply_markup=kb.as_markup(),
     )
     await query.answer()
 
