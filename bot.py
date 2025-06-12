@@ -17,24 +17,15 @@ import memepay
 
 # — MemePay API:
 MEMEPAY_API_KEY = "mp_66d4562d38569b88879f5c8e62a908ce"
-MEMEPAY_SHOP_ID  = "755b0055-39a4-4a91-bc6e-3ed590f0de52"
-MEMEPAY_CLIENT   = memepay.MemePay(api_key=MEMEPAY_API_KEY, shop_id=MEMEPAY_SHOP_ID)
+MEMEPAY_SHOP_ID = "755b0055-39a4-4a91-bc6e-3ed590f0de52"
+MEMEPAY_CLIENT = memepay.MemePay(api_key=MEMEPAY_API_KEY, shop_id=MEMEPAY_SHOP_ID)
+# Принудительно установить формат времени, чтобы избежать AttributeError
+MEMEPAY_CLIENT.datetime_format = "iso"
 # — Telegram Bot token, CryptoCloud, 1Plat, Google Sheets:
 TELEGRAM_TOKEN      = "7198376627:AAG-vTOZu8XRMBA3nKflcouYx_lH03ETYjA"
 BANNER_URL          = "https://drive.google.com/uc?export=view&id=1nuxsSRsHW1FkCsA9EDbfNApKNzMYjjwK"
 CRYPTOCLOUD_API_KEY = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.…"
 # ID магазина для работы через API (integration ID)
-
-MEMEPAY_SHOP_ID = "755b0055-39a4-4a91-bc6e-3ed590f0de52"
-# Инициализируем клиент MemePay
-MEMEPAY_CLIENT = memepay.MemePay(api_key=MEMEPAY_API_KEY, shop_id=MEMEPAY_SHOP_ID)
-# Библиотека не инициализирует формат дат для синхронного клиента,
-# из-за чего возможен AttributeError при парсинге времени.
-
-MEMEPAY_SHOP_ID = "755b0055-39a4-4a91-bc6e-3ed590f0de52"
-
-# Инициализируем клиент MemePay
-MEMEPAY_CLIENT = memepay.MemePay(api_key=MEMEPAY_API_KEY, shop_id=MEMEPAY_SHOP_ID)
 
 
 from aiogram import Bot, Dispatcher, types
