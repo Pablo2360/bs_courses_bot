@@ -1271,11 +1271,12 @@ async def pay_memepay_callback(query: CallbackQuery):
     caption = (
         "<b>⚡ Чтобы получить доступ к курсу, оплатите через MemePay:</b>\n\n"
         "Сумма: <code>590 ₽</code>\n\n"
+        "Нажмите «Оплатить в MemePay🐸», чтобы перейти к оплате.\n"
         "Нажмите «Оплатить в MemePay🤪», чтобы перейти к оплате.\n"
         "После оплаты нажмите «🔄 Проверить оплату»."
     )
     kb = InlineKeyboardBuilder()
-    kb.button(text="Оплатить в MemePay🤪", url=pay_link)
+    kb.button(text="Оплатить в MemePay🐸", url=pay_link)
     kb.button(text="🔄 Проверить оплату", callback_data=f"check_payment_memepay|{category}|{offset}|{idx}")
     kb.button(text="🔙 Вернуться", callback_data=f"pay_options|{category}|{offset}|{idx}")
     kb.adjust(1)
