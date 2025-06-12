@@ -976,7 +976,10 @@ async def pay_options_callback(query: CallbackQuery):
     offset = int(offset_str)
     idx = int(idx_str)
 
-    new_caption = "Выберите способ оплаты💎"
+    new_caption = (
+        "Выберите способ оплаты💎\n"
+        "Оплачиваете один раз 590 ₽ и получаете неограниченный доступ ко всем курсам❤️‍🔥"
+    )
     kb = InlineKeyboardBuilder()
     kb.button(text="MemePay🐸 — СБП, карты и др.", callback_data=f"pay_memepay|{category}|{offset}|{idx}")
     kb.button(text="1Plat💶 — СБП", callback_data=f"pay_1plat_sbp|{category}|{offset}|{idx}")
