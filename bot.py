@@ -88,6 +88,12 @@ SHEET_SCOPES        = [
 CREDS = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", SHEET_SCOPES)
 GC = None
 SHEET = None
+<<<<<<< wd1klt-codex/изменить-строку-new_caption-в-обработчике-pay_options_callba
+
+# Список категорий (названия листов), загружается при старте бота
+CACHED_CATEGORIES: List[str] = []
+=======
+>>>>>>> main
 
 # — Кэш для вкладок (листов) с TTL = 1 час
 _SHEET_CACHE: Dict[str, List[Dict]] = {}
@@ -709,6 +715,18 @@ async def on_startup():
     load_invoices_memepay()
     load_invoices_1plat()
     await init_gspread()
+<<<<<<< wd1klt-codex/изменить-строку-new_caption-в-обработчике-pay_options_callba
+
+    global CACHED_CATEGORIES
+    try:
+        sh = await asyncio.to_thread(GC.open_by_key, SPREADSHEET_ID)
+        CACHED_CATEGORIES = [ws.title for ws in await asyncio.to_thread(sh.worksheets)]
+    except Exception as e:
+        logger.error(f"[startup] Не удалось загрузить категории: {e}")
+        CACHED_CATEGORIES = []
+
+=======
+>>>>>>> main
     await bot.delete_webhook(drop_pending_updates=True)
     logger.info("Bot started, polling is ready…")
 
@@ -852,6 +870,8 @@ async def show_categories(query: CallbackQuery):
         await query.answer()
         return
 
+<<<<<<< wd1klt-codex/изменить-строку-new_caption-в-обработчике-pay_options_callba
+=======
     categories = [
         ("💎TELEGRAM",       "Telegram"),
         ("YOUTUBE",          "YouTube"),
@@ -875,9 +895,10 @@ async def show_categories(query: CallbackQuery):
         ("ПРОДАЖИ💎",        "ПРОДАЖИ"),
     ]
 
+>>>>>>> main
     kb = InlineKeyboardBuilder()
-    for display_text, cat_key in categories:
-        kb.button(text=display_text, callback_data=f"cat|{cat_key}|0")
+    for cat in CACHED_CATEGORIES:
+        kb.button(text=cat, callback_data=f"cat|{cat}|0")
     kb.adjust(2)
 
     await query.message.edit_media(
