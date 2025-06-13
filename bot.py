@@ -775,7 +775,7 @@ async def show_categories(query: CallbackQuery):
     categories = [
         ("💎TELEGRAM",       "Telegram"),
         ("YOUTUBE",          "YouTube"),
-        ("VK",               "VK"),
+        ("VK",               "ВК"),
         ("TIKTOK",           "TIKTOK"),
         ("AVITO",            "АВИТО"),
         ("ДРОПШИППИНГ",      "ДРОПШИППИНГ"),
