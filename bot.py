@@ -923,7 +923,7 @@ async def course_callback(query: CallbackQuery):
 
     cr = get_courses_by_category(category, offset, 10)[idx]
     title = cr["Название"]
-    cover = cr.get("Обложка") or cr.get("Обложка (URL)", BANNER_URL)
+    cover = cr.get("Обложка") or cr.get("Обложка (URL)", "")
     tele_desc = cr.get("", "").strip()
     course_link = cr.get("Ссылка на курс", "").strip()
 
@@ -940,10 +940,17 @@ async def course_callback(query: CallbackQuery):
         kb.button(text="🔙 Вернуться", callback_data=f"cat|{category}|{offset}")
         kb.adjust(1)
 
-        await query.message.edit_media(
-            media=InputMediaPhoto(media=cover, caption=caption, parse_mode="HTML"),
-            reply_markup=kb.as_markup()
-        )
+        if cover:
+            await query.message.edit_media(
+                media=InputMediaPhoto(media=cover, caption=caption, parse_mode="HTML"),
+                reply_markup=kb.as_markup()
+            )
+        else:
+            await query.message.edit_caption(
+                caption=caption,
+                parse_mode=ParseMode.HTML,
+                reply_markup=kb.as_markup()
+            )
         await query.answer()
         return
 
@@ -958,10 +965,17 @@ async def course_callback(query: CallbackQuery):
     kb.button(text="🔙 Вернуться", callback_data=f"cat|{category}|{offset}")
     kb.adjust(1)
 
-    await query.message.edit_media(
-        media=InputMediaPhoto(media=cover, caption=caption, parse_mode="HTML"),
-        reply_markup=kb.as_markup()
-    )
+    if cover:
+        await query.message.edit_media(
+            media=InputMediaPhoto(media=cover, caption=caption, parse_mode="HTML"),
+            reply_markup=kb.as_markup()
+        )
+    else:
+        await query.message.edit_caption(
+            caption=caption,
+            parse_mode=ParseMode.HTML,
+            reply_markup=kb.as_markup()
+        )
     await query.answer()
 
 
