@@ -11,9 +11,14 @@ from time import time
 from typing import Tuple, List, Dict, Optional
 
 import requests
+from concurrent.futures import ThreadPoolExecutor
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import memepay
+
+# Глобальная HTTP-сессия и пул потоков для I/O
+SESSION = requests.Session()
+EXECUTOR = ThreadPoolExecutor()
 
 # — MemePay API:
 MEMEPAY_API_KEY = "mp_66d4562d38569b88879f5c8e62a908ce"
@@ -34,6 +39,19 @@ from aiogram.enums import ParseMode
 from aiogram.filters import CommandStart
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InputMediaPhoto
 from aiogram.utils.keyboard import InlineKeyboardBuilder
+
+
+def make_keyboard(buttons: List[Dict], adjust: int = 1):
+    """Утилита для быстрого создания inline-клавиатуры."""
+    kb = InlineKeyboardBuilder()
+    for btn in buttons:
+        if "callback_data" in btn:
+            kb.button(text=btn["text"], callback_data=btn["callback_data"])
+        elif "url" in btn:
+            kb.button(text=btn["text"], url=btn["url"])
+    if adjust:
+        kb.adjust(adjust)
+    return kb
 
 # =========================================
 # 1. КОНФИГУРАЦИЯ (ВАШИ РЕАЛЬНЫЕ ДАННЫЕ)
@@ -66,20 +84,23 @@ SHEET_SCOPES        = [
     "https://www.googleapis.com/auth/drive",
 ]
 
-# — Google Sheets client
+# — Google Sheets client (инициализируется асинхронно)
 CREDS = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", SHEET_SCOPES)
-GC    = gspread.authorize(CREDS)
+GC = None
+SHEET = None
 
 # — Кэш для вкладок (листов) с TTL = 1 час
-_SHEET_CACHE: Dict[str, List[Dict]]   = {}
-_SHEET_CACHE_LOCK                   = threading.Lock()
-_SHEET_CACHE_LOADED_AT: Dict[str,float] = {}
-_SHEET_CACHE_TTL                    = 3600  # 1 час
-# Кэш для вкладок (листов) с TTL = 1 час
 _SHEET_CACHE: Dict[str, List[Dict]] = {}
 _SHEET_CACHE_LOCK = threading.Lock()
 _SHEET_CACHE_LOADED_AT: Dict[str, float] = {}
-_SHEET_CACHE_TTL = 3600  # 1 час
+_SHEET_CACHE_TTL = 43200  # 12 часов
+
+
+async def init_gspread():
+    """Асинхронно авторизует gspread и открывает таблицу."""
+    global GC, SHEET
+    GC = await asyncio.to_thread(gspread.authorize, CREDS)
+    SHEET = await asyncio.to_thread(GC.open_by_key, SPREADSHEET_ID)
 
 
 def _find_worksheet_by_name(sh: gspread.Spreadsheet, category: str):
@@ -134,6 +155,14 @@ def count_courses_by_category(category: str) -> int:
             _load_sheet_cache(sheet_name)
     data = _SHEET_CACHE.get(sheet_name, [])
     return len(data)
+
+
+async def async_get_courses_by_category(category: str, offset: int = 0, limit: int = 10) -> List[Dict]:
+    return await asyncio.to_thread(get_courses_by_category, category, offset, limit)
+
+
+async def async_count_courses_by_category(category: str) -> int:
+    return await asyncio.to_thread(count_courses_by_category, category)
 
 
 # =========================================
@@ -346,7 +375,7 @@ def create_cryptocloud_invoice(
         "order_id": order_id,
     }
 
-    resp = requests.post(url, headers=headers, json=payload, timeout=10)
+    resp = SESSION.post(url, headers=headers, json=payload, timeout=10)
     print(f"[create_invoice_cc] HTTP {resp.status_code}")
     print(f"[create_invoice_cc] BODY: {resp.text}")
 
@@ -368,6 +397,10 @@ def create_cryptocloud_invoice(
     return invoice_uuid, pay_link
 
 
+async def async_create_cryptocloud_invoice(*args, **kwargs):
+    return await asyncio.to_thread(create_cryptocloud_invoice, *args, **kwargs)
+
+
 def check_invoice_status_cc(invoice_uuid: str) -> str:
     """
     Проверяет статус счета через V2-метод:
@@ -382,7 +415,7 @@ def check_invoice_status_cc(invoice_uuid: str) -> str:
     }
     payload = {"uuids": [invoice_uuid]}
 
-    resp = requests.post(url, headers=headers, json=payload, timeout=10)
+    resp = SESSION.post(url, headers=headers, json=payload, timeout=10)
     print(f"[check_status_cc] HTTP {resp.status_code}")
     print(f"[check_status_cc] BODY: {resp.text}")
 
@@ -408,6 +441,10 @@ def check_invoice_status_cc(invoice_uuid: str) -> str:
         raise RuntimeError("CryptoCloud: в ответе нет поля status для инвойса")
     return status  # "created", "pending", "paid", "overpaid", "canceled", ...
 
+
+async def async_check_invoice_status_cc(invoice_uuid: str) -> str:
+    return await asyncio.to_thread(check_invoice_status_cc, invoice_uuid)
+
 # =========================================
 # 7. MemePay API: создание и проверка счёта
 # =========================================
@@ -417,10 +454,18 @@ def create_memepay_invoice(amount_rub: float = 590.0, method: Optional[str] = No
     resp = MEMEPAY_CLIENT.create_payment(amount=amount_rub, method=method)
     return resp.payment_id, resp.payment_url
 
+
+async def async_create_memepay_invoice(*args, **kwargs):
+    return await asyncio.to_thread(create_memepay_invoice, *args, **kwargs)
+
 def check_memepay_status(payment_id: str) -> str:
     """Возвращает статус платежа MemePay."""
     info = MEMEPAY_CLIENT.get_payment_info(payment_id)
     return info.status
+
+
+async def async_check_memepay_status(payment_id: str) -> str:
+    return await asyncio.to_thread(check_memepay_status, payment_id)
 
 
 # =========================================
@@ -462,7 +507,7 @@ def create_1plat_invoice(
         payload["currency"] = currency
 
     # Отправляем запрос
-    resp = requests.post(url, headers=headers, json=payload, timeout=10)
+    resp = SESSION.post(url, headers=headers, json=payload, timeout=10)
     print("=== DEBUG create_1plat_invoice ===")
     print("URL   :", url)
     print("HEADERS:", headers)
@@ -483,6 +528,10 @@ def create_1plat_invoice(
         raise RuntimeError(f"1Plat: не получили guid или url при создании счета: {data}")
 
     return guid, pay_url
+
+
+async def async_create_1plat_invoice(*args, **kwargs) -> Tuple[str, str]:
+    return await asyncio.to_thread(create_1plat_invoice, *args, **kwargs)
 
 
 def check_1plat_invoice_status(guid: str) -> int:
@@ -522,7 +571,7 @@ def check_1plat_invoice_status(guid: str) -> int:
         "x-shop": PLAT_SHOP_ID,
         "x-secret": PLAT_SECRET,
     }
-    resp = requests.get(url, headers=headers, timeout=10)
+    resp = SESSION.get(url, headers=headers, timeout=10)
     print(f"[check_status_1plat] HTTP {resp.status_code}")
     print(f"[check_status_1plat] BODY: {resp.text}")
 
@@ -540,6 +589,10 @@ def check_1plat_invoice_status(guid: str) -> int:
     if status is None:
         raise RuntimeError("1Plat: нет поля status в ответе при проверке счета")
     return int(status)  # -2, -1, 0, 1, 2
+
+
+async def async_check_1plat_invoice_status(guid: str) -> int:
+    return await asyncio.to_thread(check_1plat_invoice_status, guid)
 
 
 # =========================================
@@ -560,11 +613,11 @@ dp = Dispatcher()
 async def poll_1plat_invoices():
     while True:
         items = list(INVOICES_1PLAT.items())
-        for key, guid in items:
-            try:
-                status = check_1plat_invoice_status(guid)
-            except Exception as e:
-                logger.warning(f"[poll_1plat] Ошибка при проверке {guid}: {e}")
+        tasks = [async_check_1plat_invoice_status(guid) for _, guid in items]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        for (key, guid), status in zip(items, results):
+            if isinstance(status, Exception):
+                logger.warning(f"[poll_1plat] Ошибка при проверке {guid}: {status}")
                 continue
 
             user_id_str, category, offset_str, idx_str = key.split("|", 3)
@@ -578,7 +631,7 @@ async def poll_1plat_invoices():
                 save_invoices_1plat()
                 add_subscription(user_id)
 
-                cr = get_courses_by_category(category, offset, 10)[idx]
+                cr = (await async_get_courses_by_category(category, offset, 10))[idx]
                 title = cr["Название"]
                 cover = cr.get("Обложка") or BANNER_URL
                 tele_desc = cr.get("Описание", "").strip()
@@ -604,11 +657,39 @@ async def poll_1plat_invoices():
                     INVOICES_1PLAT.pop(key, None)
                 save_invoices_1plat()
 
-        await asyncio.sleep(60)
+        await asyncio.sleep(10)
 
 
 # Эмодзи для отображения рядом с курсом
 CURRENCY_EMOJI = ["💴", "💷", "💶", "💲"]
+
+# ----- Кэш статусов подписки -----
+SUB_CACHE: Dict[int, Tuple[bool, float]] = {}
+SUB_QUEUE: asyncio.Queue = asyncio.Queue()
+
+
+async def sub_worker():
+    while True:
+        uid, fut = await SUB_QUEUE.get()
+        await asyncio.sleep(0.1)
+        try:
+            member = await bot.get_chat_member(chat_id=CHANNEL_USERNAME, user_id=uid)
+            status = member.status in ("creator", "administrator", "member")
+        except Exception:
+            status = False
+        SUB_CACHE[uid] = (status, time())
+        fut.set_result(status)
+
+
+async def is_subscribed(user_id: int) -> bool:
+    now = time()
+    cached = SUB_CACHE.get(user_id)
+    if cached and now - cached[1] < 30:
+        return cached[0]
+    loop = asyncio.get_running_loop()
+    fut = loop.create_future()
+    await SUB_QUEUE.put((user_id, fut))
+    return await fut
 
 # =========================================
 # Фоновая проверка счетов 1Plat
@@ -627,11 +708,13 @@ async def on_startup():
     load_invoices_cc()
     load_invoices_memepay()
     load_invoices_1plat()
+    await init_gspread()
     await bot.delete_webhook(drop_pending_updates=True)
     logger.info("Bot started, polling is ready…")
 
     # Запускаем фоновую задачу для авто-проверки 1Plat
     asyncio.create_task(poll_1plat_invoices())
+    asyncio.create_task(sub_worker())
 
 
 
@@ -675,12 +758,11 @@ async def go_callback(query: CallbackQuery):
      • Если подписан — показываем категории.
     """
     user_id = query.from_user.id
-    member = await bot.get_chat_member(chat_id=CHANNEL_USERNAME, user_id=user_id)
-    if member.status not in ("creator", "administrator", "member"):
-        kb_sub = InlineKeyboardBuilder()
-        kb_sub.button(text="Подписаться🌴", url=CHANNEL_URL)
-        kb_sub.button(text="Проверить подписку", callback_data="check_subscription")
-        kb_sub.adjust(1)
+    if not await is_subscribed(user_id):
+        kb_sub = make_keyboard([
+            {"text": "Подписаться🌴", "url": CHANNEL_URL},
+            {"text": "Проверить подписку", "callback_data": "check_subscription"},
+        ])
 
         await query.message.edit_media(
             media=InputMediaPhoto(
@@ -705,8 +787,7 @@ async def check_subscription(query: CallbackQuery):
      • Если нет — снова просим подписаться.
     """
     user_id = query.from_user.id
-    member = await bot.get_chat_member(chat_id=CHANNEL_USERNAME, user_id=user_id)
-    if member.status in ("creator", "administrator", "member"):
+    if await is_subscribed(user_id):
         await query.message.edit_media(
             media=InputMediaPhoto(
                 media=BANNER_URL,
@@ -754,12 +835,11 @@ async def show_categories(query: CallbackQuery):
     Если пользователь отписался после «go», снова предлагаем подписаться.
     """
     user_id = query.from_user.id
-    member = await bot.get_chat_member(chat_id=CHANNEL_USERNAME, user_id=user_id)
-    if member.status not in ("creator", "administrator", "member"):
-        kb_sub = InlineKeyboardBuilder()
-        kb_sub.button(text="Подписаться🌴", url=CHANNEL_URL)
-        kb_sub.button(text="Проверить подписку", callback_data="check_subscription")
-        kb_sub.adjust(1)
+    if not await is_subscribed(user_id):
+        kb_sub = make_keyboard([
+            {"text": "Подписаться🌴", "url": CHANNEL_URL},
+            {"text": "Проверить подписку", "callback_data": "check_subscription"},
+        ])
 
         await query.message.edit_media(
             media=InputMediaPhoto(
@@ -819,12 +899,11 @@ async def cat_callback(query: CallbackQuery):
      • Иначе — показываем список курсов с пагинацией.
     """
     user_id = query.from_user.id
-    member = await bot.get_chat_member(chat_id=CHANNEL_USERNAME, user_id=user_id)
-    if member.status not in ("creator", "administrator", "member"):
-        kb_sub = InlineKeyboardBuilder()
-        kb_sub.button(text="Подписаться🌴", url=CHANNEL_URL)
-        kb_sub.button(text="Проверить подписку", callback_data="check_subscription")
-        kb_sub.adjust(1)
+    if not await is_subscribed(user_id):
+        kb_sub = make_keyboard([
+            {"text": "Подписаться🌴", "url": CHANNEL_URL},
+            {"text": "Проверить подписку", "callback_data": "check_subscription"},
+        ])
         await query.message.edit_media(
             media=InputMediaPhoto(
                 media=BANNER_URL,
@@ -855,7 +934,7 @@ async def cat_callback(query: CallbackQuery):
         await query.answer()
         return
 
-    courses = get_courses_by_category(category, offset, 10)
+    courses = await async_get_courses_by_category(category, offset, 10)
     page_num = offset // 10 + 1
     total_pages = (total - 1) // 10 + 1
 
@@ -900,12 +979,11 @@ async def course_callback(query: CallbackQuery):
      • Иначе — показываем кнопку «Перейти к изучению» (pay_options).
     """
     user_id = query.from_user.id
-    member = await bot.get_chat_member(chat_id=CHANNEL_USERNAME, user_id=user_id)
-    if member.status not in ("creator", "administrator", "member"):
-        kb_sub = InlineKeyboardBuilder()
-        kb_sub.button(text="Подписаться🌴", url=CHANNEL_URL)
-        kb_sub.button(text="Проверить подписку", callback_data="check_subscription")
-        kb_sub.adjust(1)
+    if not await is_subscribed(user_id):
+        kb_sub = make_keyboard([
+            {"text": "Подписаться🌴", "url": CHANNEL_URL},
+            {"text": "Проверить подписку", "callback_data": "check_subscription"},
+        ])
         await query.message.edit_media(
             media=InputMediaPhoto(
                 media=BANNER_URL,
@@ -921,9 +999,9 @@ async def course_callback(query: CallbackQuery):
     offset = int(offset_str)
     idx = int(idx_str)
 
-    cr = get_courses_by_category(category, offset, 10)[idx]
+    cr = (await async_get_courses_by_category(category, offset, 10))[idx]
     title = cr["Название"]
-    cover = cr.get("Обложка") or cr.get("Обложка (URL)", BANNER_URL)
+    cover = cr.get("Обложка") or cr.get("Обложка (URL)", "")
     tele_desc = cr.get("", "").strip()
     course_link = cr.get("Ссылка на курс", "").strip()
 
@@ -940,10 +1018,17 @@ async def course_callback(query: CallbackQuery):
         kb.button(text="🔙 Вернуться", callback_data=f"cat|{category}|{offset}")
         kb.adjust(1)
 
-        await query.message.edit_media(
-            media=InputMediaPhoto(media=cover, caption=caption, parse_mode="HTML"),
-            reply_markup=kb.as_markup()
-        )
+        if cover:
+            await query.message.edit_media(
+                media=InputMediaPhoto(media=cover, caption=caption, parse_mode="HTML"),
+                reply_markup=kb.as_markup()
+            )
+        else:
+            await query.message.edit_caption(
+                caption=caption,
+                parse_mode=ParseMode.HTML,
+                reply_markup=kb.as_markup()
+            )
         await query.answer()
         return
 
@@ -958,10 +1043,17 @@ async def course_callback(query: CallbackQuery):
     kb.button(text="🔙 Вернуться", callback_data=f"cat|{category}|{offset}")
     kb.adjust(1)
 
-    await query.message.edit_media(
-        media=InputMediaPhoto(media=cover, caption=caption, parse_mode="HTML"),
-        reply_markup=kb.as_markup()
-    )
+    if cover:
+        await query.message.edit_media(
+            media=InputMediaPhoto(media=cover, caption=caption, parse_mode="HTML"),
+            reply_markup=kb.as_markup()
+        )
+    else:
+        await query.message.edit_caption(
+            caption=caption,
+            parse_mode=ParseMode.HTML,
+            reply_markup=kb.as_markup()
+        )
     await query.answer()
 
 
@@ -976,7 +1068,10 @@ async def pay_options_callback(query: CallbackQuery):
     offset = int(offset_str)
     idx = int(idx_str)
 
-    new_caption = "Выберите способ оплаты💎"
+    new_caption = (
+        "Выберите способ оплаты💎\n"
+        "Оплачиваете один раз 590 ₽ и получаете неограниченный доступ ко всем курсам❤️‍🔥"
+    )
     kb = InlineKeyboardBuilder()
     kb.button(text="MemePay🐸 — СБП, карты и др.", callback_data=f"pay_memepay|{category}|{offset}|{idx}")
     kb.button(text="1Plat💶 — СБП", callback_data=f"pay_1plat_sbp|{category}|{offset}|{idx}")
@@ -1008,12 +1103,11 @@ async def pay_cc_callback(query: CallbackQuery):
     idx = int(idx_str)
     user_id = query.from_user.id
 
-    member = await bot.get_chat_member(chat_id=CHANNEL_USERNAME, user_id=user_id)
-    if member.status not in ("creator", "administrator", "member"):
-        kb_sub = InlineKeyboardBuilder()
-        kb_sub.button(text="Подписаться🌴", url=CHANNEL_URL)
-        kb_sub.button(text="Проверить подписку", callback_data="check_subscription")
-        kb_sub.adjust(1)
+    if not await is_subscribed(user_id):
+        kb_sub = make_keyboard([
+            {"text": "Подписаться🌴", "url": CHANNEL_URL},
+            {"text": "Проверить подписку", "callback_data": "check_subscription"},
+        ])
         await query.message.edit_media(
             media=InputMediaPhoto(
                 media=BANNER_URL,
@@ -1027,7 +1121,7 @@ async def pay_cc_callback(query: CallbackQuery):
 
     # 1) Создаём новый счёт CryptoCloud
     try:
-        invoice_uuid, pay_link = create_cryptocloud_invoice(
+        invoice_uuid, pay_link = await async_create_cryptocloud_invoice(
             user_id=user_id,
             category=category,
             offset=offset,
@@ -1092,7 +1186,7 @@ async def check_payment_cc_callback(query: CallbackQuery):
         return
 
     try:
-        status = check_invoice_status_cc(invoice_uuid)
+        status = await async_check_invoice_status_cc(invoice_uuid)
     except Exception as e:
         await query.answer("❌ Не удалось проверить оплату CryptoCloud. Попробуйте позже.", show_alert=True)
         print(f"[check_payment_cc] Ошибка при check_invoice_status_cc для uuid={invoice_uuid}: {e}")
@@ -1114,7 +1208,7 @@ async def check_payment_cc_callback(query: CallbackQuery):
         add_subscription(user_id)
         await query.answer("✅ Оплата CryptoCloud подтверждена! Доступ к курсу ниже.", show_alert=True)
 
-        cr = get_courses_by_category(category, offset, 10)[idx]
+        cr = (await async_get_courses_by_category(category, offset, 10))[idx]
         title = cr["Название"]
         cover = cr.get("Обложка") or cr.get("Обложка (URL)", BANNER_URL)
         tele_desc = cr.get("", "").strip()
@@ -1171,12 +1265,11 @@ async def pay_1plat_crypto_callback(query: CallbackQuery):
     idx = int(idx_str)
     user_id = query.from_user.id
 
-    member = await bot.get_chat_member(chat_id=CHANNEL_USERNAME, user_id=user_id)
-    if member.status not in ("creator", "administrator", "member"):
-        kb_sub = InlineKeyboardBuilder()
-        kb_sub.button(text="Подписаться🌴", url=CHANNEL_URL)
-        kb_sub.button(text="Проверить подписку", callback_data="check_subscription")
-        kb_sub.adjust(1)
+    if not await is_subscribed(user_id):
+        kb_sub = make_keyboard([
+            {"text": "Подписаться🌴", "url": CHANNEL_URL},
+            {"text": "Проверить подписку", "callback_data": "check_subscription"},
+        ])
         await query.message.edit_media(
             media=InputMediaPhoto(
                 media=BANNER_URL,
@@ -1190,7 +1283,7 @@ async def pay_1plat_crypto_callback(query: CallbackQuery):
 
     # 1) Создаём новый счёт 1Plat (crypto)
     try:
-        guid, pay_link = create_1plat_invoice(
+        guid, pay_link = await async_create_1plat_invoice(
             user_id=user_id,
             category=category,
             offset=offset,
@@ -1241,8 +1334,7 @@ async def pay_memepay_callback(query: CallbackQuery):
     user_id = query.from_user.id
 
     # Проверяем подписку на канал
-    member = await bot.get_chat_member(chat_id=CHANNEL_USERNAME, user_id=user_id)
-    if member.status not in ("creator", "administrator", "member"):
+    if not await is_subscribed(user_id):
         kb = InlineKeyboardBuilder()
         kb.button(text="Подписаться🌴", url=CHANNEL_URL)
         kb.button(text="Проверить подписку", callback_data="check_subscription")
@@ -1315,7 +1407,7 @@ async def check_payment_memepay_callback(query: CallbackQuery):
         add_subscription(user_id)
         await query.answer("✅ Оплата MemePay подтверждена! Доступ к курсу ниже.", show_alert=True)
 
-        cr = get_courses_by_category(category, offset, 10)[idx]
+        cr = (await async_get_courses_by_category(category, offset, 10))[idx]
         title = cr["Название"]
         cover = cr.get("Обложка") or BANNER_URL
         link = cr.get("Ссылка на курс", "")
@@ -1344,12 +1436,11 @@ async def pay_1plat_sbp_callback(query: CallbackQuery):
     idx = int(idx_str)
     user_id = query.from_user.id
 
-    member = await bot.get_chat_member(chat_id=CHANNEL_USERNAME, user_id=user_id)
-    if member.status not in ("creator", "administrator", "member"):
-        kb_sub = InlineKeyboardBuilder()
-        kb_sub.button(text="Подписаться🌴", url=CHANNEL_URL)
-        kb_sub.button(text="Проверить подписку", callback_data="check_subscription")
-        kb_sub.adjust(1)
+    if not await is_subscribed(user_id):
+        kb_sub = make_keyboard([
+            {"text": "Подписаться🌴", "url": CHANNEL_URL},
+            {"text": "Проверить подписку", "callback_data": "check_subscription"},
+        ])
         await query.message.edit_media(
             media=InputMediaPhoto(
                 media=BANNER_URL,
@@ -1363,7 +1454,7 @@ async def pay_1plat_sbp_callback(query: CallbackQuery):
 
     # 1) Создаём новый счёт 1Plat (SBP)
     try:
-        guid, pay_link = create_1plat_invoice(
+        guid, pay_link = await async_create_1plat_invoice(
             user_id=user_id,
             category=category,
             offset=offset,
@@ -1429,7 +1520,7 @@ async def check_payment_1plat_callback(query: CallbackQuery):
         return
 
     try:
-        status = check_1plat_invoice_status(guid)
+        status = await async_check_1plat_invoice_status(guid)
     except Exception as e:
         await query.answer("❌ Не удалось проверить оплату 1Plat. Попробуйте позже.", show_alert=True)
         print(f"[check_payment_1plat] Ошибка при check_1plat_invoice_status для guid={guid}: {e}")
@@ -1451,7 +1542,7 @@ async def check_payment_1plat_callback(query: CallbackQuery):
         add_subscription(user_id)
         await query.answer("✅ Оплата 1Plat подтверждена! Доступ к курсу ниже.", show_alert=True)
 
-        cr = get_courses_by_category(category, offset, 10)[idx]
+        cr = (await async_get_courses_by_category(category, offset, 10))[idx]
         title = cr["Название"]
         cover = cr.get("Обложка") or cr.get("Обложка (URL)", BANNER_URL)
         tele_desc = cr.get("", "").strip()
