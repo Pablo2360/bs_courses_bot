@@ -9,16 +9,38 @@ import os
 import threading
 from time import time
 from typing import Tuple, List, Dict, Optional
+from collections import OrderedDict
 
-import requests
-from concurrent.futures import ThreadPoolExecutor
+import aiohttp
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import memepay
+from functools import lru_cache
 
-# Глобальная HTTP-сессия и пул потоков для I/O
-SESSION = requests.Session()
-EXECUTOR = ThreadPoolExecutor()
+
+class LRUCacheDict(OrderedDict):
+    """Simple LRU cache based on OrderedDict."""
+
+    def __init__(self, maxsize: int):
+        self.maxsize = maxsize
+        super().__init__()
+
+    def __setitem__(self, key, value):
+        if key in self:
+            super().__delitem__(key)
+        elif len(self) >= self.maxsize:
+            self.popitem(last=False)
+        super().__setitem__(key, value)
+
+    def get(self, key, default=None):
+        if key in self:
+            value = super().__getitem__(key)
+            self.move_to_end(key)
+            return value
+        return default
+
+# Глобальная асинхронная HTTP-сессия
+SESSION: aiohttp.ClientSession | None = None
 
 # — MemePay API:
 MEMEPAY_API_KEY = "mp_66d4562d38569b88879f5c8e62a908ce"
@@ -41,17 +63,18 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InputMediaPhoto
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 
-def make_keyboard(buttons: List[Dict], adjust: int = 1):
-    """Утилита для быстрого создания inline-клавиатуры."""
+@lru_cache(maxsize=64)
+def make_keyboard(buttons: Tuple[Tuple[str, str], ...], adjust: int = 1):
+    """Фабрика inline-клавиатур."""
     kb = InlineKeyboardBuilder()
-    for btn in buttons:
-        if "callback_data" in btn:
-            kb.button(text=btn["text"], callback_data=btn["callback_data"])
-        elif "url" in btn:
-            kb.button(text=btn["text"], url=btn["url"])
+    for text, data in buttons:
+        if data.startswith("http"):
+            kb.button(text=text, url=data)
+        else:
+            kb.button(text=text, callback_data=data)
     if adjust:
         kb.adjust(adjust)
-    return kb
+    return kb.as_markup()
 
 # =========================================
 # 1. КОНФИГУРАЦИЯ (ВАШИ РЕАЛЬНЫЕ ДАННЫЕ)
@@ -89,9 +112,33 @@ CREDS = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", SHE
 GC = None
 SHEET = None
 
+# Список категорий (кэшируется)
+CACHED_CATEGORIES = (
+    ("💎TELEGRAM",       "Telegram"),
+    ("YOUTUBE",          "YouTube"),
+    ("VK",               "ВК"),
+    ("TIKTOK",           "TIKTOK"),
+    ("AVITO",            "АВИТО"),
+    ("ДРОПШИППИНГ",      "ДРОПШИППИНГ"),
+    ("МАРКЕТПЛЕЙСЫ",     "МАРКЕТПЛЕЙСЫ"),
+    ("АРБИТРАЖ ТРАФИКА", "АРБИТРАЖ ТРАФИКА"),
+    ("ХАКИНГ",           "ХАКИНГ"),
+    ("САМОРАЗВИТИЕ",     "САМОРАЗВИТИЕ"),
+    ("БАЗЫ ПОСТАВЩИКОВ", "БАЗЫ ПОСТАВЩИКОВ"),
+    ("НЕЙРОСЕТИ",        "НЕЙРОСЕТИ"),
+    ("ФРИЛАНС",          "ФРИЛАНС"),
+    ("КРИПТОВАЛЮТЫ",     "КРИПТОВАЛЮТЫ"),
+    ("ТРЕЙДИНГ",         "ТРЕЙДИНГ"),
+    ("СХЕМЫ ЗАРАБОТКА",  "СХЕМЫ ЗАРАБОТКА"),
+    ("ИНВЕСТИЦИИ",       "ИНВЕСТИЦИИ"),
+    ("ПСИХОЛОГИЯ",       "ПСИХОЛОГИЯ"),
+    ("ПИКАП",            "ПИКАП"),
+    ("ПРОДАЖИ💎",        "ПРОДАЖИ"),
+)
+
 # — Кэш для вкладок (листов) с TTL = 1 час
 _SHEET_CACHE: Dict[str, List[Dict]] = {}
-_SHEET_CACHE_LOCK = threading.Lock()
+_SHEET_CACHE_LOCK = asyncio.Lock()
 _SHEET_CACHE_LOADED_AT: Dict[str, float] = {}
 _SHEET_CACHE_TTL = 43200  # 12 часов
 
@@ -132,6 +179,7 @@ def _load_sheet_cache(sheet_name: str):
     _SHEET_CACHE_LOADED_AT[sheet_name] = time()
 
 
+@lru_cache(maxsize=128)
 def get_courses_by_category(category: str, offset: int = 0, limit: int = 10) -> List[Dict]:
     """
     Возвращает список (offset:offset+limit) записей из листа <category>.
@@ -145,6 +193,7 @@ def get_courses_by_category(category: str, offset: int = 0, limit: int = 10) -> 
     return data[offset: offset + limit]
 
 
+@lru_cache(maxsize=128)
 def count_courses_by_category(category: str) -> int:
     """
     Возвращает общее число записей в листе <category>.
@@ -223,7 +272,7 @@ def add_subscription(user_id: int):
 # =========================================
 
 INVOICES_FILE = "invoices.json"
-INVOICES_LOCK = threading.Lock()
+INVOICES_LOCK = asyncio.Lock()
 # Ключ: "<user_id>|<category>|<offset>|<idx>" → uuid счета
 INVOICES: Dict[str, str] = {}
 
@@ -274,13 +323,13 @@ def make_invoice_key(user_id: int, category: str, offset: int, idx: int) -> str:
 # =========================================
 
 INVOICES_1PLAT_FILE = "invoices_1plat.json"
-INVOICES_1PLAT_LOCK = threading.Lock()
+INVOICES_1PLAT_LOCK = asyncio.Lock()
 # Ключ: "<user_id>|<category>|<offset>|<idx>" → guid счета
 INVOICES_1PLAT: Dict[str, str] = {}
 
 # 6bis. INVOICES: MemePay (invoices_memepay.json)
 INVOICES_MEMEPAY_FILE   = "invoices_memepay.json"
-INVOICES_MEMEPAY_LOCK   = threading.Lock()
+INVOICES_MEMEPAY_LOCK   = asyncio.Lock()
 INVOICES_MEMEPAY: Dict[str, str] = {}
 
 def load_invoices_memepay():
@@ -611,10 +660,15 @@ dp = Dispatcher()
 # — Асинхронная проверка 1Plat (должна быть до @dp.startup)
 
 async def poll_1plat_invoices():
+    sem = asyncio.Semaphore(5)
     while True:
         items = list(INVOICES_1PLAT.items())
-        tasks = [async_check_1plat_invoice_status(guid) for _, guid in items]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        async def check(pair):
+            key, guid = pair
+            async with sem:
+                return await async_check_1plat_invoice_status(guid)
+
+        results = await asyncio.gather(*(check(p) for p in items), return_exceptions=True)
         for (key, guid), status in zip(items, results):
             if isinstance(status, Exception):
                 logger.warning(f"[poll_1plat] Ошибка при проверке {guid}: {status}")
@@ -664,7 +718,7 @@ async def poll_1plat_invoices():
 CURRENCY_EMOJI = ["💴", "💷", "💶", "💲"]
 
 # ----- Кэш статусов подписки -----
-SUB_CACHE: Dict[int, Tuple[bool, float]] = {}
+SUB_CACHE: LRUCacheDict = LRUCacheDict(1024)
 SUB_QUEUE: asyncio.Queue = asyncio.Queue()
 
 
@@ -705,6 +759,8 @@ async def on_startup():
       • Загружаем незавершённые счета из invoices.json и invoices_1plat.json
       • Сбрасываем старые апдейты (Webhook-оконфликт)
     """
+    global SESSION
+    SESSION = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10))
     load_invoices_cc()
     load_invoices_memepay()
     load_invoices_1plat()
@@ -715,6 +771,12 @@ async def on_startup():
     # Запускаем фоновую задачу для авто-проверки 1Plat
     asyncio.create_task(poll_1plat_invoices())
     asyncio.create_task(sub_worker())
+
+
+@dp.shutdown()
+async def on_shutdown():
+    if SESSION:
+        await SESSION.close()
 
 
 
@@ -744,10 +806,8 @@ async def cmd_start(message: types.Message):
         "CAACAgUAAxkBAAE1kl1oOEACQJAT9YaXxuWR77eFnTaC_gACYxkAAhoBCFQAATaz0ezI1JI2BA"
     )
 
-    kb = InlineKeyboardBuilder()
-    kb.button(text="💎 GO", callback_data="go")
-    kb.adjust(1)
-    await message.answer("Жми «💎 GO», чтобы выбрать категорию", reply_markup=kb.as_markup())
+    kb = make_keyboard((("💎 GO", "go"),))
+    await message.answer("Жми «💎 GO", чтобы выбрать категорию", reply_markup=kb)
 
 
 @dp.callback_query(lambda c: c.data == "go")
@@ -759,10 +819,12 @@ async def go_callback(query: CallbackQuery):
     """
     user_id = query.from_user.id
     if not await is_subscribed(user_id):
-        kb_sub = make_keyboard([
-            {"text": "Подписаться🌴", "url": CHANNEL_URL},
-            {"text": "Проверить подписку", "callback_data": "check_subscription"},
-        ])
+        kb_sub = make_keyboard(
+            (
+                ("Подписаться🌴", CHANNEL_URL),
+                ("Проверить подписку", "check_subscription"),
+            )
+        )
 
         await query.message.edit_media(
             media=InputMediaPhoto(
@@ -770,7 +832,7 @@ async def go_callback(query: CallbackQuery):
                 caption="Сначала подпишись на канал, чтоб не потерять нас:",
                 parse_mode="HTML"
             ),
-            reply_markup=kb_sub.as_markup()
+            reply_markup=kb_sub
         )
         await query.answer()
         return
@@ -836,10 +898,12 @@ async def show_categories(query: CallbackQuery):
     """
     user_id = query.from_user.id
     if not await is_subscribed(user_id):
-        kb_sub = make_keyboard([
-            {"text": "Подписаться🌴", "url": CHANNEL_URL},
-            {"text": "Проверить подписку", "callback_data": "check_subscription"},
-        ])
+        kb_sub = make_keyboard(
+            (
+                ("Подписаться🌴", CHANNEL_URL),
+                ("Проверить подписку", "check_subscription"),
+            )
+        )
 
         await query.message.edit_media(
             media=InputMediaPhoto(
@@ -847,38 +911,15 @@ async def show_categories(query: CallbackQuery):
                 caption="Сначала подпишись на канал, чтоб не потерять нас:",
                 parse_mode="HTML"
             ),
-            reply_markup=kb_sub.as_markup()
+            reply_markup=kb_sub
         )
         await query.answer()
         return
 
-    categories = [
-        ("💎TELEGRAM",       "Telegram"),
-        ("YOUTUBE",          "YouTube"),
-        ("VK",               "ВК"),
-        ("TIKTOK",           "TIKTOK"),
-        ("AVITO",            "АВИТО"),
-        ("ДРОПШИППИНГ",      "ДРОПШИППИНГ"),
-        ("МАРКЕТПЛЕЙСЫ",     "МАРКЕТПЛЕЙСЫ"),
-        ("АРБИТРАЖ ТРАФИКА", "АРБИТРАЖ ТРАФИКА"),
-        ("ХАКИНГ",           "ХАКИНГ"),
-        ("САМОРАЗВИТИЕ",     "САМОРАЗВИТИЕ"),
-        ("БАЗЫ ПОСТАВЩИКОВ", "БАЗЫ ПОСТАВЩИКОВ"),
-        ("НЕЙРОСЕТИ",        "НЕЙРОСЕТИ"),
-        ("ФРИЛАНС",          "ФРИЛАНС"),
-        ("КРИПТОВАЛЮТЫ",     "КРИПТОВАЛЮТЫ"),
-        ("ТРЕЙДИНГ",         "ТРЕЙДИНГ"),
-        ("СХЕМЫ ЗАРАБОТКА",  "СХЕМЫ ЗАРАБОТКА"),
-        ("ИНВЕСТИЦИИ",       "ИНВЕСТИЦИИ"),
-        ("ПСИХОЛОГИЯ",       "ПСИХОЛОГИЯ"),
-        ("ПИКАП",            "ПИКАП"),
-        ("ПРОДАЖИ💎",        "ПРОДАЖИ"),
-    ]
-
-    kb = InlineKeyboardBuilder()
-    for display_text, cat_key in categories:
-        kb.button(text=display_text, callback_data=f"cat|{cat_key}|0")
-    kb.adjust(2)
+    kb = make_keyboard(
+        tuple((text, f"cat|{cat}|0") for text, cat in CACHED_CATEGORIES),
+        adjust=2,
+    )
 
     await query.message.edit_media(
         media=InputMediaPhoto(
@@ -886,7 +927,7 @@ async def show_categories(query: CallbackQuery):
             caption="📓 Выбери категорию:",
             parse_mode="HTML"
         ),
-        reply_markup=kb.as_markup()
+        reply_markup=kb
     )
     await query.answer()
 
@@ -900,17 +941,19 @@ async def cat_callback(query: CallbackQuery):
     """
     user_id = query.from_user.id
     if not await is_subscribed(user_id):
-        kb_sub = make_keyboard([
-            {"text": "Подписаться🌴", "url": CHANNEL_URL},
-            {"text": "Проверить подписку", "callback_data": "check_subscription"},
-        ])
+        kb_sub = make_keyboard(
+            (
+                ("Подписаться🌴", CHANNEL_URL),
+                ("Проверить подписку", "check_subscription"),
+            )
+        )
         await query.message.edit_media(
             media=InputMediaPhoto(
                 media=BANNER_URL,
                 caption="Сначала подпишись на канал, чтоб не потерять нас:",
                 parse_mode="HTML"
             ),
-            reply_markup=kb_sub.as_markup()
+            reply_markup=kb_sub
         )
         await query.answer()
         return
@@ -980,17 +1023,19 @@ async def course_callback(query: CallbackQuery):
     """
     user_id = query.from_user.id
     if not await is_subscribed(user_id):
-        kb_sub = make_keyboard([
-            {"text": "Подписаться🌴", "url": CHANNEL_URL},
-            {"text": "Проверить подписку", "callback_data": "check_subscription"},
-        ])
+        kb_sub = make_keyboard(
+            (
+                ("Подписаться🌴", CHANNEL_URL),
+                ("Проверить подписку", "check_subscription"),
+            )
+        )
         await query.message.edit_media(
             media=InputMediaPhoto(
                 media=BANNER_URL,
                 caption="Сначала подпишись на канал, чтоб не потерять нас:",
                 parse_mode="HTML"
             ),
-            reply_markup=kb_sub.as_markup()
+            reply_markup=kb_sub
         )
         await query.answer()
         return
@@ -1104,17 +1149,19 @@ async def pay_cc_callback(query: CallbackQuery):
     user_id = query.from_user.id
 
     if not await is_subscribed(user_id):
-        kb_sub = make_keyboard([
-            {"text": "Подписаться🌴", "url": CHANNEL_URL},
-            {"text": "Проверить подписку", "callback_data": "check_subscription"},
-        ])
+        kb_sub = make_keyboard(
+            (
+                ("Подписаться🌴", CHANNEL_URL),
+                ("Проверить подписку", "check_subscription"),
+            )
+        )
         await query.message.edit_media(
             media=InputMediaPhoto(
                 media=BANNER_URL,
                 caption="Сначала подпишись на канал, чтоб не потерять нас:",
                 parse_mode="HTML"
             ),
-            reply_markup=kb_sub.as_markup()
+            reply_markup=kb_sub
         )
         await query.answer()
         return
@@ -1266,17 +1313,19 @@ async def pay_1plat_crypto_callback(query: CallbackQuery):
     user_id = query.from_user.id
 
     if not await is_subscribed(user_id):
-        kb_sub = make_keyboard([
-            {"text": "Подписаться🌴", "url": CHANNEL_URL},
-            {"text": "Проверить подписку", "callback_data": "check_subscription"},
-        ])
+        kb_sub = make_keyboard(
+            (
+                ("Подписаться🌴", CHANNEL_URL),
+                ("Проверить подписку", "check_subscription"),
+            )
+        )
         await query.message.edit_media(
             media=InputMediaPhoto(
                 media=BANNER_URL,
                 caption="Сначала подпишись на канал, чтоб не потерять нас:",
                 parse_mode="HTML"
             ),
-            reply_markup=kb_sub.as_markup()
+            reply_markup=kb_sub
         )
         await query.answer()
         return
@@ -1437,17 +1486,19 @@ async def pay_1plat_sbp_callback(query: CallbackQuery):
     user_id = query.from_user.id
 
     if not await is_subscribed(user_id):
-        kb_sub = make_keyboard([
-            {"text": "Подписаться🌴", "url": CHANNEL_URL},
-            {"text": "Проверить подписку", "callback_data": "check_subscription"},
-        ])
+        kb_sub = make_keyboard(
+            (
+                ("Подписаться🌴", CHANNEL_URL),
+                ("Проверить подписку", "check_subscription"),
+            )
+        )
         await query.message.edit_media(
             media=InputMediaPhoto(
                 media=BANNER_URL,
                 caption="Сначала подпишись на канал, чтоб не потерять нас:",
                 parse_mode="HTML"
             ),
-            reply_markup=kb_sub.as_markup()
+            reply_markup=kb_sub
         )
         await query.answer()
         return
