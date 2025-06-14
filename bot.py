@@ -88,6 +88,8 @@ SHEET_SCOPES        = [
 CREDS = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", SHEET_SCOPES)
 GC = None
 SHEET = None
+# Словарь «название листа → объект Worksheet»
+WORKSHEETS: Dict[str, gspread.Worksheet] = {}
 
 # Список категорий (названия листов), загружается при старте бота
 CACHED_CATEGORIES: List[str] = []
@@ -101,9 +103,12 @@ _SHEET_CACHE_TTL = 43200  # 12 часов
 
 async def init_gspread():
     """Асинхронно авторизует gspread и открывает таблицу."""
-    global GC, SHEET
+    global GC, SHEET, WORKSHEETS, CACHED_CATEGORIES
     GC = await asyncio.to_thread(gspread.authorize, CREDS)
     SHEET = await asyncio.to_thread(GC.open_by_key, SPREADSHEET_ID)
+    worksheets = await asyncio.to_thread(SHEET.worksheets)
+    WORKSHEETS = {ws.title.strip().lower(): ws for ws in worksheets}
+    CACHED_CATEGORIES = [ws.title for ws in worksheets]
 
 
 def _find_worksheet_by_name(sh: gspread.Spreadsheet, category: str):
@@ -112,8 +117,11 @@ def _find_worksheet_by_name(sh: gspread.Spreadsheet, category: str):
     Если не найден, бросает WorksheetNotFound.
     """
     lower_cat = category.strip().lower()
+    if lower_cat in WORKSHEETS:
+        return WORKSHEETS[lower_cat]
     for ws in sh.worksheets():
         if ws.title.strip().lower() == lower_cat:
+            WORKSHEETS[lower_cat] = ws
             return ws
     raise gspread.exceptions.WorksheetNotFound(f"Лист «{category}» не найден в таблице")
 
@@ -123,9 +131,8 @@ def _load_sheet_cache(sheet_name: str):
     Загружает записи из листа sheet_name в кэш.
     """
     global _SHEET_CACHE, _SHEET_CACHE_LOADED_AT
-    sh = GC.open_by_key(SPREADSHEET_ID)
     try:
-        worksheet = _find_worksheet_by_name(sh, sheet_name)
+        worksheet = _find_worksheet_by_name(SHEET, sheet_name)
     except gspread.exceptions.WorksheetNotFound:
         _SHEET_CACHE[sheet_name] = []
         _SHEET_CACHE_LOADED_AT[sheet_name] = time()
@@ -713,13 +720,6 @@ async def on_startup():
     load_invoices_1plat()
     await init_gspread()
 
-    global CACHED_CATEGORIES
-    try:
-        sh = await asyncio.to_thread(GC.open_by_key, SPREADSHEET_ID)
-        CACHED_CATEGORIES = [ws.title for ws in await asyncio.to_thread(sh.worksheets)]
-    except Exception as e:
-        logger.error(f"[startup] Не удалось загрузить категории: {e}")
-        CACHED_CATEGORIES = []
 
     await bot.delete_webhook(drop_pending_updates=True)
     logger.info("Bot started, polling is ready…")
