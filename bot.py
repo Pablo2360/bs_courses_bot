@@ -891,6 +891,9 @@ async def show_categories(query: CallbackQuery):
     for cat in CACHED_CATEGORIES:
         kb.button(text=cat, callback_data=f"cat|{cat}|0")
     kb.adjust(2)
+    # добавляем кнопку поддержки в самый низ
+    kb.button(text="ПОДДЕРЖКА / СОТРУДНИЧЕСТВО❤️‍🔥", url="https://t.me/botmanager9")
+    kb.adjust(1)
 
     await query.message.edit_media(
         media=InputMediaPhoto(
