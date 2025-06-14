@@ -32,6 +32,9 @@ BANNER_URL          = "https://drive.google.com/uc?export=view&id=1nuxsSRsHW1FkC
 CRYPTOCLOUD_API_KEY = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.…"
 # ID магазина для работы через API (integration ID)
 
+# Спецсимвол для первой и последней категории
+EMOJI = "💎"
+
 
 from aiogram import Bot, Dispatcher, types
 from aiogram.client.default import DefaultBotProperties
@@ -888,8 +891,15 @@ async def show_categories(query: CallbackQuery):
     ]
 
     kb = InlineKeyboardBuilder()
-    for cat in CACHED_CATEGORIES:
-        kb.button(text=cat, callback_data=f"cat|{cat}|0")
+    total = len(CACHED_CATEGORIES)
+    for idx, cat in enumerate(CACHED_CATEGORIES):
+        if idx == 0:
+            label = f"{EMOJI}{cat}"
+        elif idx == total - 1:
+            label = f"{cat}{EMOJI}"
+        else:
+            label = cat
+        kb.button(text=label, callback_data=f"cat|{cat}|0")
     kb.adjust(2)
     from aiogram.types import InlineKeyboardButton
     kb.row(
