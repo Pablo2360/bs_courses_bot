@@ -891,6 +891,13 @@ async def show_categories(query: CallbackQuery):
     for cat in CACHED_CATEGORIES:
         kb.button(text=cat, callback_data=f"cat|{cat}|0")
     kb.adjust(2)
+    from aiogram.types import InlineKeyboardButton
+    kb.row(
+        InlineKeyboardButton(
+            text="ПОДДЕРЖКА / СОТРУДНИЧЕСТВО❤️‍🔥",
+            url="https://t.me/botmanager9"
+        )
+    )
 
     await query.message.edit_media(
         media=InputMediaPhoto(
